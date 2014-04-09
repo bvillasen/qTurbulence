@@ -58,6 +58,8 @@ gammaZ = 1.0
 x0 = cudaPre( 0. )
 y0 = cudaPre( 0. )
 
+plottingActive = False
+
 #Change precision of the parameters
 dx, dy, dz = cudaPre(dx), cudaPre(dy), cudaPre(dz)
 Lx, Ly, Lz = cudaPre(Lx), cudaPre(Ly), cudaPre(Lz)
@@ -69,6 +71,7 @@ volumeRender.nWidth = nWidth
 volumeRender.nHeight = nHeight
 volumeRender.nDepth = nDepth
 volumeRender.windowTitle = "Quantum Turbulence  nPoints={0}".format(nPoints)
+volumeRender.nTextures = 1
 volumeRender.initGL()
 #initialize pyCUDA context 
 cudaDevice = setCudaDevice( devN=useDevice, usingAnimation=True )
@@ -80,17 +83,22 @@ gridy = nHeight // block_size_y + 1 * ( nHeight % block_size_y != 0 )
 gridz = nDepth // block_size_z + 1 * ( nDepth % block_size_z != 0 )
 block3D = (block_size_x, block_size_y, block_size_z)
 grid3D = (gridx, gridy, gridz)
-grid3D_ising = (gridx//2, gridy, gridz)
+nBlocks3D = grid3D[0]*grid3D[1]*grid3D[2]
 
 print "\nCompiling CUDA code"
 cudaCodeFile = open("cudaQturbulence.cu","r")
-cudaCodeString = cudaCodeFile.read().replace( "cudaP", cudaP ) 
+cudaCodeString_raw = cudaCodeFile.read().replace( "cudaP", cudaP ) 
+cudaCodeString = cudaCodeString_raw % { "THREADS_PER_BLOCK":block3D[0]*block3D[1]*block3D[2], "B_WIDTH":block3D[0], "B_HEIGHT":block3D[1], "B_DEPTH":block3D[2] }
 cudaCode = SourceModule(cudaCodeString)
 getAlphas = cudaCode.get_function( "getAlphas_kernel" )
 solvePartialX = cudaCode.get_function( "solvePartialX_kernel" )
 solvePartialY = cudaCode.get_function( "solvePartialY_kernel" )
+setBoundryConditionsKernel = cudaCode.get_function( 'setBoundryConditions_kernel' )
 implicitStep1 = cudaCode.get_function( "implicitStep1_kernel" )
 implicitStep2 = cudaCode.get_function( "implicitStep2_kernel" )
+findActivityKernel = cudaCode.get_function( "findActivity_kernel" )
+getActivityKernel = cudaCode.get_function( "getActivity_kernel" )
+getVelocityKernel = cudaCode.get_function( "getVelocity_kernel" )
 ########################################################################
 from pycuda.elementwise import ElementwiseKernel
 ########################################################################
@@ -107,6 +115,7 @@ getModulo = ElementwiseKernel(arguments="pycuda::complex<cudaP> *psi, cudaP *psi
 					    psiMod[i] = mod*mod;".replace("cudaP", cudaP),	
 			      name = "getModulo_kernel",
 			      preamble="#include <pycuda-complex.hpp>")
+########################################################################
 sendModuloToUCHAR = ElementwiseKernel(arguments="cudaP *psiMod, unsigned char *psiUCHAR".replace("cudaP", cudaP),
 			      operation = "psiUCHAR[i] = (unsigned char) ( -255*(psiMod[i]-1));",
 			      name = "sendModuloToUCHAR_kernel")
@@ -143,6 +152,7 @@ def implicit_iteration( ):
   fftPlan.execute( G_d )
   implicitStep2( dt, fftKx_d , fftKy_d, fftKz_d, alpha, psiFFT_d, G_d, block=block3D, grid=grid3D) 
   fftPlan.execute( psiFFT_d, psi_d, inverse=True)  
+  #setBoundryConditionsKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), psi_d, block=block3D, grid=grid3D)  
   normalize(dx, dy, dz, psi_d)
   #GetAlphas
   getAlphas( dx, dy, dz, xMin, yMin, zMin, gammaX, gammaY, gammaZ, psi_d, alphas_d, block = block3D, grid=grid3D)
@@ -152,9 +162,17 @@ def imaginaryStep():
   getModulo( psi_d, psiMod_d )
   factor = cudaPre(1./((gpuarray.max(psiMod_d)).get()))
   multiplyByScalarReal( factor, psiMod_d )
-  sendModuloToUCHAR( psiMod_d, plotData_d)     
+  sendModuloToUCHAR( psiMod_d, plotData_d)
+  if plottingActive: 
+    #cuda.memset_d8(activity_d.ptr(), np.uint8(0), nBlocks3D )
+    findActivityKernel( cudaPre(0.001), psi_d, activity_d, grid=grid3D, block=block3D )
+    getActivityKernel( psiOther_d, activity_d, grid=grid3D, block=block3D )
+    getVelocityKernel( dx, dy, dz, psi_d, activity_d, psiOther_d, grid=grid3D, block=block3D )
+    factor = cudaPre(1./((gpuarray.max(psiOther_d)).get()))
+    multiplyByScalarReal( factor, psiOther_d )
+    sendModuloToUCHAR( psiOther_d, plotData_d)
   copyToScreenArray()
-  implicit_iteration()
+  [ implicit_iteration() for i in range(5) ]
 ########################################################################
 
 
@@ -194,16 +212,54 @@ G_d = gpuarray.to_gpu(  np.zeros_like(psi_h) )
 fftKx_d = gpuarray.to_gpu( fftKx_h )         #OPTIMIZATION
 fftKy_d = gpuarray.to_gpu( fftKy_h )
 fftKz_d = gpuarray.to_gpu( fftKz_h )
+activity_d = gpuarray.to_gpu( np.zeros( nBlocks3D, dtype=np.uint8 ) )
+psiOther_d = gpuarray.to_gpu(  np.zeros_like(psi_h.real) )
 #memory for plotting
 #plotDataFloat_d = gpuarray.to_gpu(np.zeros_like(psi_h.real).astype(np.float32))
 plotData_d = gpuarray.to_gpu(np.zeros([nDepth, nHeight, nWidth], dtype = np.uint8))
 volumeRender.plotData_dArray, copyToScreenArray = gpuArray3DtocudaArray( plotData_d )
 print "Total Global Memory Used: {0:.2f} MB\n".format(float(initialMemory-getFreeMemory( show=False ))/1e6) 
 
-
+def keyboard(*args):
+  #global volumeRender.transferScale, volumeRender.brightness, volumeRender.density, volumeRender.transferOffset
+  global plottingActive
+  ESCAPE = '\033'
+  # If escape is pressed, kill everything.
+  if args[0] == ESCAPE:
+    print "Ending Simulation"
+    #cuda.gl.Context.pop()
+    sys.exit()
+  if args[0] == '1':
+    volumeRender.transferScale += np.float32(0.01)
+    print "Image Transfer Scale: ", volumeRender.transferScale
+  if args[0] == '2':
+    volumeRender.transferScale -= np.float32(0.01)
+    print "Image Transfer Scale: ",volumeRender.transferScale
+  if args[0] == '4':
+    volumeRender.brightness -= np.float32(0.1)
+    print "Image Brightness : ",volumeRender.brightness
+  if args[0] == '5':
+    volumeRender.brightness += np.float32(0.1)
+    print "Image Brightness : ",volumeRender.brightness
+  if args[0] == '7':
+    volumeRender.density -= np.float32(0.01)
+    print "Image Density : ",volumeRender.density    
+  if args[0] == '8':
+    volumeRender.density += np.float32(0.01)
+    print "Image Density : ",volumeRender.density    
+  if args[0] == '3':
+    volumeRender.transferOffset += np.float32(0.01)
+    print "Image Offset : ", volumeRender.transferOffset    
+  if args[0] == '6':
+    volumeRender.transferOffset -= np.float32(0.01)
+    print "Image Offset : ", volumeRender.transferOffset 
+  if args[0] == 'a': 
+    plottingActive = not plottingActive
+    if plottingActive: print "plottingActive"
 
 #configure volumeRender functions 
 volumeRender.viewTranslation[2] = -2
+volumeRender.keyboard = keyboard
 volumeRender.stepFunc = imaginaryStep
 
 #stepFunction()
