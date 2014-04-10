@@ -50,7 +50,7 @@ zMax, zMin = Lz/2, -Lz/2
 dx, dy, dz = Lx/(nWidth-1), Ly/(nHeight-1), Lz/(nDepth-1 )
 Z, Y, X = np.mgrid[ zMin:zMax:nDepth*1j, yMin:yMax:nHeight*1j, xMin:xMax:nWidth*1j ]
 
-omega = 0.8
+omega = 0.5
 alpha = 1000.0
 gammaX = 1.0
 gammaY = 1.0
@@ -59,6 +59,7 @@ x0 = cudaPre( 0. )
 y0 = cudaPre( 0. )
 
 plottingActive = False
+plotVar = 0
 
 #Change precision of the parameters
 dx, dy, dz = cudaPre(dx), cudaPre(dy), cudaPre(dz)
@@ -164,15 +165,16 @@ def imaginaryStep():
   multiplyByScalarReal( factor, psiMod_d )
   sendModuloToUCHAR( psiMod_d, plotData_d)
   if plottingActive: 
-    #cuda.memset_d8(activity_d.ptr(), np.uint8(0), nBlocks3D )
+    cuda.memset_d8(activity_d.ptr, 0, nBlocks3D )
     findActivityKernel( cudaPre(0.001), psi_d, activity_d, grid=grid3D, block=block3D )
-    getActivityKernel( psiOther_d, activity_d, grid=grid3D, block=block3D )
-    getVelocityKernel( dx, dy, dz, psi_d, activity_d, psiOther_d, grid=grid3D, block=block3D )
-    factor = cudaPre(1./((gpuarray.max(psiOther_d)).get()))
-    multiplyByScalarReal( factor, psiOther_d )
+    if plotVar == 0: getActivityKernel( psiOther_d, activity_d, grid=grid3D, block=block3D )
+    if plotVar == 1:
+      getVelocityKernel( dx, dy, dz, psi_d, activity_d, psiOther_d, grid=grid3D, block=block3D )
+      factor = cudaPre(1./((gpuarray.max(psiOther_d)).get()))
+      multiplyByScalarReal( factor, psiOther_d )
     sendModuloToUCHAR( psiOther_d, plotData_d)
   copyToScreenArray()
-  [ implicit_iteration() for i in range(5) ]
+  [ implicit_iteration() for i in range(1) ]
 ########################################################################
 
 
@@ -257,12 +259,23 @@ def keyboard(*args):
     plottingActive = not plottingActive
     if plottingActive: print "plottingActive"
 
+def specialKeyboardFunc( key, x, y ):
+  global plotVar
+  if key== volumeRender.GLUT_KEY_RIGHT:
+    plotVar += 1
+    if plotVar == 2: plotVar = 0
+  if key== volumeRender.GLUT_KEY_LEFT:
+    plotVar -= 1
+    if plotVar == -1: plotVar = 1    
+  
+  
 #configure volumeRender functions 
 volumeRender.viewTranslation[2] = -2
 volumeRender.keyboard = keyboard
+volumeRender.specialKeys = specialKeyboardFunc
 volumeRender.stepFunc = imaginaryStep
 
-#stepFunction()
+#imaginaryStep()
 
 #run volumeRender animation
 volumeRender.animate()

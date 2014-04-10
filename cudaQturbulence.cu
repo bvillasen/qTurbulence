@@ -119,7 +119,7 @@ __global__ void findActivity_kernel( cudaP minDensity, pyComplex *psi_d, unsigne
   int t_k = blockIdx.z*blockDim.z + threadIdx.z;
   int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
   int tid_b = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.z;
-  int bid = blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y;
+//   int bid = blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y;
   
   pyComplex psi = psi_d[tid];
   __shared__ float density[ %(THREADS_PER_BLOCK)s ];
@@ -133,8 +133,21 @@ __global__ void findActivity_kernel( cudaP minDensity, pyComplex *psi_d, unsigne
     i /= 2;
   }
   if ( tid_b == 0 ){
-    if (density[0] >= minDensity ) activity[bid] = (unsigned char) 1;
-    else activity[bid] = (unsigned char) 0;
+    if (density[0] >= minDensity ) {
+      activity[ blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y ] = (unsigned char) 1;
+      //right 
+      if (blockIdx.x < gridDim.x-1) activity[ (blockIdx.x+1) + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y ] = (unsigned char) 1;
+      //left
+      if (blockIdx.x > 0) activity[ (blockIdx.x-1) + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y ] = (unsigned char) 1;
+      //up 
+      if (blockIdx.y < gridDim.y-1) activity[ blockIdx.x + (blockIdx.y+1)*gridDim.x + blockIdx.z*gridDim.x*gridDim.y ] = (unsigned char) 1;
+      //down
+      if (blockIdx.y > 0) activity[ blockIdx.x + (blockIdx.y-1)*gridDim.x + blockIdx.z*gridDim.x*gridDim.y ] = (unsigned char) 1;
+      //top 
+      if (blockIdx.z < gridDim.z-1) activity[ blockIdx.x + blockIdx.y*gridDim.x + (blockIdx.z+1)*gridDim.x*gridDim.y ] = (unsigned char) 1;
+      //bottom
+      if (blockIdx.z > 0) activity[ blockIdx.x + blockIdx.y*gridDim.x + (blockIdx.z-1)*gridDim.x*gridDim.y ] = (unsigned char) 1;
+    }
   }
 }
 __global__ void getActivity_kernel( cudaP *psiOther, unsigned char *activity ){
