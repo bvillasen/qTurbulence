@@ -57,6 +57,7 @@ gammaY = 1.0
 gammaZ = 1.0
 x0 = cudaPre( 0. )
 y0 = cudaPre( 0. )
+neighbors = 1
 
 plottingActive = False
 plotVar = 0
@@ -169,7 +170,7 @@ def imaginaryStep():
     findActivityKernel( cudaPre(0.001), psi_d, activity_d, grid=grid3D, block=block3D )
     if plotVar == 0: getActivityKernel( psiOther_d, activity_d, grid=grid3D, block=block3D )
     if plotVar == 1:
-      getVelocityKernel( dx, dy, dz, psi_d, activity_d, psiOther_d, grid=grid3D, block=block3D )
+      getVelocityKernel( np.int32(neighbors), dx, dy, dz, psi_d, activity_d, psiOther_d, grid=grid3D, block=block3D )
       factor = cudaPre(1./((gpuarray.max(psiOther_d)).get()))
       multiplyByScalarReal( factor, psiOther_d )
     sendModuloToUCHAR( psiOther_d, plotData_d)
@@ -260,7 +261,14 @@ def keyboard(*args):
     if plottingActive: print "plottingActive"
 
 def specialKeyboardFunc( key, x, y ):
-  global plotVar
+  global plotVar, neighbors
+  if key== volumeRender.GLUT_KEY_UP:
+    neighbors += 1
+    if neighbors == 3: neighbors = 1
+    print "Neighbors: ", neighbors
+  #if key== volumeRender.GLUT_KEY_DOWN:
+    #plotVar -= 1
+    #if plotVar == -1: plotVar = 1
   if key== volumeRender.GLUT_KEY_RIGHT:
     plotVar += 1
     if plotVar == 2: plotVar = 0
