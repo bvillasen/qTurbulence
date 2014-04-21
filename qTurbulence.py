@@ -38,7 +38,7 @@ nData = nWidth*nHeight*nDepth
 #Simulation Parameters
 dt = 0.005
 
-dtReal = 0.004
+dtReal = 0.005
 
 
 Lx = 30.0
@@ -50,7 +50,7 @@ zMax, zMin = Lz/2, -Lz/2
 dx, dy, dz = Lx/(nWidth-1), Ly/(nHeight-1), Lz/(nDepth-1 )
 Z, Y, X = np.mgrid[ zMin:zMax:nDepth*1j, yMin:yMax:nHeight*1j, xMin:xMax:nWidth*1j ]
 
-omega = 0.5
+omega = 0.3
 alpha = 1000.0
 gammaX = 1.0
 gammaY = 1.0
@@ -61,7 +61,7 @@ neighbors = 1
 
 applyTransition = False
 realDynamics = False
-plottingActive = False
+plottingActive = True
 plotVar = 0
 
 #Change precision of the parameters
@@ -75,7 +75,7 @@ volumeRender.nWidth = nWidth
 volumeRender.nHeight = nHeight
 volumeRender.nDepth = nDepth
 volumeRender.windowTitle = "Quantum Turbulence  nPoints={0}".format(nPoints)
-volumeRender.nTextures = 1
+volumeRender.nTextures = 2
 volumeRender.initGL()
 #initialize pyCUDA context 
 cudaDevice = setCudaDevice( devN=useDevice, usingAnimation=True )
@@ -199,27 +199,29 @@ def rk4_iteration():
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
 		  psi_d, psiK1_d, psiK2_d, psiRunge_d, np.uint8(1), activity_d, grid=grid3D, block=block3D ) 
-  copyComplexDtoD( psiRunge_d, psi_d )
-  copyComplexDtoD( psiRunge_d, psiK2_d )
+  #copyComplexDtoD( psiRunge_d, psi_d )
+  #copyComplexDtoD( psiRunge_d, psiK2_d )
 ########################################################################
 def realStep():
   [rk4_iteration() for i in range(5)]
 ########################################################################
 def stepFuntion():
   getModulo( psi_d, psiMod_d )
-  factor = cudaPre(1./((gpuarray.max(psiMod_d)).get()))
-  multiplyByScalarReal( factor, psiMod_d )
+  maxVal = (gpuarray.max(psiMod_d)).get()
+  multiplyByScalarReal( cudaPre(0.95/(maxVal)), psiMod_d )
   sendModuloToUCHAR( psiMod_d, plotData_d)
-  if plottingActive: 
-    cuda.memset_d8(activity_d.ptr, 0, nBlocks3D )
-    findActivityKernel( cudaPre(0.001), psi_d, activity_d, grid=grid3D, block=block3D )
-    if plotVar == 0: getActivityKernel( psiOther_d, activity_d, grid=grid3D, block=block3D )
-    if plotVar == 1:
-      getVelocityKernel( np.int32(neighbors), dx, dy, dz, psi_d, activity_d, psiOther_d, grid=grid3D, block=block3D )
-      factor = cudaPre(1./((gpuarray.max(psiOther_d)).get()))
-      multiplyByScalarReal( factor, psiOther_d )
-    sendModuloToUCHAR( psiOther_d, plotData_d)
   copyToScreenArray()
+
+  cuda.memset_d8(activity_d.ptr, 0, nBlocks3D )
+  findActivityKernel( cudaPre(0.001), psi_d, activity_d, grid=grid3D, block=block3D )
+  if plotVar == 1: getActivityKernel( psiOther_d, activity_d, grid=grid3D, block=block3D )
+  if plotVar == 0:
+    getVelocityKernel( np.int32(neighbors), dx, dy, dz, psi_d, activity_d, psiOther_d, grid=grid3D, block=block3D )
+    maxVal = (gpuarray.max(psiOther_d)).get()
+    if maxVal > 0: multiplyByScalarReal( cudaPre(1./maxVal), psiOther_d )
+  #cuda.memset_d8(plotData_d_1.ptr, 0, nBlocks3D )
+  sendModuloToUCHAR( psiOther_d, plotData_d_1)
+  copyToScreenArray_1()
   if applyTransition: timeTransition()
   if realDynamics: realStep()
   else: imaginaryStep()
@@ -227,17 +229,20 @@ def stepFuntion():
 ########################################################################
 def timeTransition():
   global realDynamics, alpha, applyTransition
+  realDynamics = not realDynamics
+  applyTransition = False
   if realDynamics:
+    copyComplexDtoD( psi_d, psiK2_d )
+    copyComplexDtoD( psi_d, psiRunge_d )
+    print "Real Dynamics"
+  else:    
     #GetAlphas
     getAlphas( dx, dy, dz, xMin, yMin, zMin, gammaX, gammaY, gammaZ, psi_d, alphas_d, block = block3D, grid=grid3D)
     alpha= cudaPre( ( 0.5*(gpuarray.max(alphas_d) + gpuarray.min(alphas_d)) ).get() )  #OPTIMIZACION 
     print "Imaginary Dynamics"
-  else:
-    copyComplexDtoD( psi_d, psiK2_d )
-    copyComplexDtoD( psi_d, psiRunge_d )
-    print "Real Dynamics"
-  realDynamics = not realDynamics
-  applyTransition = False
+
+    
+
   
 
 print "\nInitializing Data"  
@@ -282,7 +287,9 @@ psiK2_d = gpuarray.to_gpu( psi_h )
 psiRunge_d = gpuarray.to_gpu( psi_h )
 #memory for plotting
 plotData_d = gpuarray.to_gpu(np.zeros([nDepth, nHeight, nWidth], dtype = np.uint8))
+plotData_d_1 = gpuarray.to_gpu(np.zeros([nDepth, nHeight, nWidth], dtype = np.uint8))
 volumeRender.plotData_dArray, copyToScreenArray = gpuArray3DtocudaArray( plotData_d )
+volumeRender.plotData_dArray_1, copyToScreenArray_1 = gpuArray3DtocudaArray( plotData_d_1 )
 print "Total Global Memory Used: {0:.2f} MB\n".format(float(initialMemory-getFreeMemory( show=False ))/1e6) 
 
 def keyboard(*args):

@@ -187,9 +187,9 @@ __global__ void getVelocity_kernel( int neighbors, cudaP dx, cudaP dy, cudaP dz,
   psi_sh[threadIdx.x][threadIdx.y][threadIdx.z] = center;
   __syncthreads();
     
-  cudaP dxInv = 1.0/dx;
-  cudaP dyInv = 1.0/dy;
-  cudaP dzInv = 1.0/dz;
+  cudaP dxInv = cudaP(1.0)/dx;
+  cudaP dyInv = cudaP(1.0)/dy;
+  cudaP dzInv = cudaP(1.0)/dz;
   pyComplex gradient_x, gradient_y, gradient_z;
   if (neighbors == 2){
     //Gradient X
@@ -273,7 +273,7 @@ __global__ void getVelocity_kernel( int neighbors, cudaP dx, cudaP dy, cudaP dz,
 }
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-__device__ pyComplex vortexCore( int nWidth, int nHeight, cudaP nDepth, cudaP xMin, cudaP yMin, cudaP zMin, 
+__device__ pyComplex vortexCore( int nWidth, int nHeight, int nDepth, cudaP xMin, cudaP yMin, cudaP zMin, 
 				 cudaP dx, cudaP dy, cudaP dz, int t_i, int t_j, int t_k, int tid,
 				 cudaP gammaX, cudaP gammaY, cudaP gammaZ, cudaP omega, cudaP x0, cudaP y0, pyComplex *psiStep){
   pyComplex center = psiStep[tid];
@@ -281,48 +281,71 @@ __device__ pyComplex vortexCore( int nWidth, int nHeight, cudaP nDepth, cudaP xM
   psi_sh[threadIdx.x][threadIdx.y][threadIdx.z] = center;
   __syncthreads();
   
-  cudaP dxInv = 1.0f/dx;
-  cudaP dyInv = 1.0f/dy;
-  cudaP dzInv = 1.0f/dz;
+  cudaP dxInv = cudaP(1.0)/dx;
+  cudaP dyInv = cudaP(1.0)/dy;
+  cudaP dzInv = cudaP(1.0)/dz;
   cudaP x = t_j*dx + xMin;
   cudaP y = t_i*dy + yMin;
   cudaP z = t_k*dz + zMin;
-
+  
+  pyComplex iComplex( cudaP(0.), cudaP(1.) );
   pyComplex laplacian( cudaP(0.), cudaP(0.) );
+  pyComplex Lz( cudaP(0.), cudaP(0.) );
+  pyComplex psiMinus, psiPlus;
   // laplacian X-term
-  if (threadIdx.x==0 )
-    laplacian += ( psiStep[ (t_j-1) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y ] +
-		psi_sh[threadIdx.x+1][threadIdx.y][threadIdx.z] - cudaP(2.)*center )*dxInv*dxInv;
-  else if (threadIdx.x==blockDim.x-1)
-    laplacian += ( psiStep[ (t_j+1) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y ] +
-		psi_sh[threadIdx.x-1][threadIdx.y][threadIdx.z] - cudaP(2.)*center )*dxInv*dxInv;    
-  else laplacian += (psi_sh[threadIdx.x+1][threadIdx.y][threadIdx.z] + psi_sh[threadIdx.x-1][threadIdx.y][threadIdx.z] - cudaP(2.)*center )*dxInv*dxInv;
+  if (threadIdx.x==0 ){
+    psiMinus = psiStep[ (t_j-1) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y ]; 
+    psiPlus = psi_sh[threadIdx.x+1][threadIdx.y][threadIdx.z];
+  }
+  else if (threadIdx.x==blockDim.x-1){
+    psiPlus = psiStep[ (t_j+1) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y ];
+    psiMinus =psi_sh[threadIdx.x-1][threadIdx.y][threadIdx.z];    
+  }
+  else {
+    psiPlus = psi_sh[threadIdx.x+1][threadIdx.y][threadIdx.z];
+    psiMinus = psi_sh[threadIdx.x-1][threadIdx.y][threadIdx.z];
+  }
+  laplacian += ( psiPlus + psiMinus - cudaP(2.)*center )*dxInv*dxInv;
+  Lz += -iComplex*( psiPlus - psiMinus )*dxInv*cudaP(0.5)*(y-y0)*omega;
   // laplacian Y-term
-  if (threadIdx.y==0 )
-    laplacian += ( psiStep[ t_j + (t_i-1)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y ] +
-		psi_sh[threadIdx.x][threadIdx.y+1][threadIdx.z] - cudaP(2.)*center )*dyInv*dyInv;
-  else if (threadIdx.y==blockDim.y-1)
-    laplacian += ( psiStep[ t_j + (t_i+1)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y ] +
-		psi_sh[threadIdx.x][threadIdx.y-1][threadIdx.z] - cudaP(2.)*center )*dyInv*dyInv;    
-  else laplacian += (psi_sh[threadIdx.x][threadIdx.y+1][threadIdx.z] + psi_sh[threadIdx.x][threadIdx.y-1][threadIdx.z] - cudaP(2.)*center )*dyInv*dyInv;
+  if (threadIdx.y==0 ){
+    psiMinus = psiStep[ t_j + (t_i-1)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y ]; 
+    psiPlus = psi_sh[threadIdx.x][threadIdx.y+1][threadIdx.z];
+  }
+  else if (threadIdx.y==blockDim.y-1){
+    psiPlus = psiStep[ t_j + (t_i+1)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y ];
+    psiMinus =psi_sh[threadIdx.x][threadIdx.y-1][threadIdx.z];    
+  }
+  else {
+    psiPlus = psi_sh[threadIdx.x][threadIdx.y+1][threadIdx.z];
+    psiMinus = psi_sh[threadIdx.x][threadIdx.y-1][threadIdx.z];
+  }
+  laplacian += ( psiPlus + psiMinus - cudaP(2.)*center )*dyInv*dyInv;
+  Lz +=  iComplex*( psiPlus - psiMinus)*dyInv*cudaP(0.5)*(x-x0)*omega;
   // laplacian Z-term
-  if (threadIdx.z==0 )
-    laplacian += ( psiStep[ t_j + t_i*blockDim.x*gridDim.x + (t_k-1)*blockDim.x*gridDim.x*blockDim.y*gridDim.y ] +
-		psi_sh[threadIdx.x][threadIdx.y][threadIdx.z+1] - cudaP(2.)*center )*dyInv*dyInv;
-  else if (threadIdx.z==blockDim.z-1)
-    laplacian += ( psiStep[ t_j + t_i*blockDim.x*gridDim.x + (t_k+1)*blockDim.x*gridDim.x*blockDim.y*gridDim.y ] +
-		psi_sh[threadIdx.x][threadIdx.y][threadIdx.z-1] - cudaP(2.)*center )*dzInv*dzInv;    
-  else laplacian += (psi_sh[threadIdx.x][threadIdx.y][threadIdx.z+1] + psi_sh[threadIdx.x][threadIdx.y][threadIdx.z-1] - cudaP(2.)*center )*dzInv*dzInv;        
-
-  pyComplex iComplex( cudaP(0), cudaP(1.) );
-  pyComplex Vtrap, GP, Lz;
-// 
-  Vtrap = center*(gammaX*x*x + gammaY*y*y + gammaZ*z*z)*cudaP(0.5);
+  if (threadIdx.z==0 ){
+    psiMinus = psiStep[ t_j + t_i*blockDim.x*gridDim.x + (t_k-1)*blockDim.x*gridDim.x*blockDim.y*gridDim.y ]; 
+    psiPlus = psi_sh[threadIdx.x][threadIdx.y][threadIdx.z+1];
+  }
+  else if (threadIdx.z==blockDim.z-1){
+    psiPlus = psiStep[ t_j + t_i*blockDim.x*gridDim.x + (t_k+1)*blockDim.x*gridDim.x*blockDim.y*gridDim.y ];
+    psiMinus =psi_sh[threadIdx.x][threadIdx.y][threadIdx.z-1];    
+  }
+  else {
+    psiPlus = psi_sh[threadIdx.x][threadIdx.y][threadIdx.z+1];
+    psiMinus = psi_sh[threadIdx.x][threadIdx.y][threadIdx.z-1];
+  }
+  laplacian += ( psiPlus + psiMinus - cudaP(2.)*center )*dzInv*dzInv; 
+  
+  
+  pyComplex Vtrap, GP; 
+  Vtrap = (gammaX*x*x + gammaY*y*y + gammaZ*z*z)*cudaP(0.5)*center;
 //   Lz =  iComplex*( (psi_sh[threadIdx.x][threadIdx.y+1][threadIdx.z] - psi_sh[threadIdx.x][threadIdx.y-1][threadIdx.z])*(dyInv/2)*(x-x0) - (psi_sh[threadIdx.x+1][threadIdx.y][threadIdx.z] - psi_sh[threadIdx.x-1][threadIdx.y][threadIdx.z])*(dxInv/2)*(y-y0))*omega ;
-  GP = center*cudaP(8000)*abs(center)*abs(center);  
+  GP = cudaP(8000.)*abs(center)*abs(center)*center;  
 
-//   return iComplex*(laplacian*cudaP(0.5) - Vtrap - GP - Lz);
-  return iComplex*( laplacian*cudaP(0.5) -Vtrap - GP );
+  return iComplex*(laplacian*cudaP(0.5) - Vtrap - GP - Lz);
+//   return iComplex*( - Vtrap - GP );
+//   return cudaP(0.5)*iComplex;
 }
 ////////////////////////////////////////////////////////////////////////////////
 //////////////////////           EULER                //////////////////////////
@@ -341,7 +364,7 @@ __global__ void eulerStep_kernel( int nWidth, int nHeight, int nDepth, cudaP slo
   
   
   //Border blocks are skiped
-  if ( ( blockIdx.x == 0 or blockDim.x == gridDim.x -1 ) or ( blockIdx.y == 0 or blockDim.y == gridDim.y -1 ) or ( blockIdx.z == 0 or blockDim.z == gridDim.z -1 ) ) return; 
+//   if ( ( blockIdx.x == 0 or blockDim.x == gridDim.x -1 ) or ( blockIdx.y == 0 or blockDim.y == gridDim.y -1 ) or ( blockIdx.z == 0 or blockDim.z == gridDim.z -1 ) ) return; 
   //Unactive blocks are skiped
   __shared__ unsigned char activeBlock;
   if (tid_b == 0 ) activeBlock = activity[bid];
@@ -357,7 +380,8 @@ __global__ void eulerStep_kernel( int nWidth, int nHeight, int nDepth, cudaP slo
   if (lastRK4Step ){
     pyComplex valueOut = psiRunge[tid] + slopeCoef*value/cudaP(6.); 
     psiRunge[tid] = valueOut;
-//     psiStepOut[tid] = valueOut;
+    psiStepOut[tid] = valueOut;
+    psi_d[tid] = valueOut;
   }  
   else{
 //     pyComplex psiOut = psi_d[tid] + weight*value;
