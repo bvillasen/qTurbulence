@@ -118,7 +118,7 @@ __global__ void findActivity_kernel( cudaP minDensity, pyComplex *psi_d, unsigne
   int t_i = blockIdx.y*blockDim.y + threadIdx.y;
   int t_k = blockIdx.z*blockDim.z + threadIdx.z;
   int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-  int tid_b = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.z;
+  int tid_b = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
 //   int bid = blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y;
   
   pyComplex psi = psi_d[tid];
@@ -172,7 +172,7 @@ __global__ void getVelocity_kernel( int neighbors, cudaP dx, cudaP dy, cudaP dz,
   int t_i = blockIdx.y*blockDim.y + threadIdx.y;
   int t_k = blockIdx.z*blockDim.z + threadIdx.z;
   int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-  int tid_b = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.z;
+  int tid_b = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
   int bid = blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y;
   
   //Border blocks are skiped
@@ -295,14 +295,14 @@ __device__ pyComplex vortexCore( int nWidth, int nHeight, int nDepth, cudaP xMin
   // laplacian X-term
   if (threadIdx.x==0 ){
     psiMinus = psiStep[ (t_j-1) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y ]; 
-    psiPlus = psi_sh[threadIdx.x+1][threadIdx.y][threadIdx.z];
+    psiPlus  = psi_sh[threadIdx.x+1][threadIdx.y][threadIdx.z];
   }
   else if (threadIdx.x==blockDim.x-1){
-    psiPlus = psiStep[ (t_j+1) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y ];
-    psiMinus =psi_sh[threadIdx.x-1][threadIdx.y][threadIdx.z];    
+    psiPlus  = psiStep[ (t_j+1) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y ];
+    psiMinus = psi_sh[threadIdx.x-1][threadIdx.y][threadIdx.z];    
   }
   else {
-    psiPlus = psi_sh[threadIdx.x+1][threadIdx.y][threadIdx.z];
+    psiPlus  = psi_sh[threadIdx.x+1][threadIdx.y][threadIdx.z];
     psiMinus = psi_sh[threadIdx.x-1][threadIdx.y][threadIdx.z];
   }
   laplacian += ( psiPlus + psiMinus - cudaP(2.)*center )*dxInv*dxInv;
@@ -310,14 +310,14 @@ __device__ pyComplex vortexCore( int nWidth, int nHeight, int nDepth, cudaP xMin
   // laplacian Y-term
   if (threadIdx.y==0 ){
     psiMinus = psiStep[ t_j + (t_i-1)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y ]; 
-    psiPlus = psi_sh[threadIdx.x][threadIdx.y+1][threadIdx.z];
+    psiPlus  = psi_sh[threadIdx.x][threadIdx.y+1][threadIdx.z];
   }
   else if (threadIdx.y==blockDim.y-1){
-    psiPlus = psiStep[ t_j + (t_i+1)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y ];
-    psiMinus =psi_sh[threadIdx.x][threadIdx.y-1][threadIdx.z];    
+    psiPlus  = psiStep[ t_j + (t_i+1)*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y ];
+    psiMinus = psi_sh[threadIdx.x][threadIdx.y-1][threadIdx.z];    
   }
   else {
-    psiPlus = psi_sh[threadIdx.x][threadIdx.y+1][threadIdx.z];
+    psiPlus  = psi_sh[threadIdx.x][threadIdx.y+1][threadIdx.z];
     psiMinus = psi_sh[threadIdx.x][threadIdx.y-1][threadIdx.z];
   }
   laplacian += ( psiPlus + psiMinus - cudaP(2.)*center )*dyInv*dyInv;
@@ -325,14 +325,14 @@ __device__ pyComplex vortexCore( int nWidth, int nHeight, int nDepth, cudaP xMin
   // laplacian Z-term
   if (threadIdx.z==0 ){
     psiMinus = psiStep[ t_j + t_i*blockDim.x*gridDim.x + (t_k-1)*blockDim.x*gridDim.x*blockDim.y*gridDim.y ]; 
-    psiPlus = psi_sh[threadIdx.x][threadIdx.y][threadIdx.z+1];
+    psiPlus  = psi_sh[threadIdx.x][threadIdx.y][threadIdx.z+1];
   }
   else if (threadIdx.z==blockDim.z-1){
-    psiPlus = psiStep[ t_j + t_i*blockDim.x*gridDim.x + (t_k+1)*blockDim.x*gridDim.x*blockDim.y*gridDim.y ];
-    psiMinus =psi_sh[threadIdx.x][threadIdx.y][threadIdx.z-1];    
+    psiPlus  = psiStep[ t_j + t_i*blockDim.x*gridDim.x + (t_k+1)*blockDim.x*gridDim.x*blockDim.y*gridDim.y ];
+    psiMinus = psi_sh[threadIdx.x][threadIdx.y][threadIdx.z-1];    
   }
   else {
-    psiPlus = psi_sh[threadIdx.x][threadIdx.y][threadIdx.z+1];
+    psiPlus  = psi_sh[threadIdx.x][threadIdx.y][threadIdx.z+1];
     psiMinus = psi_sh[threadIdx.x][threadIdx.y][threadIdx.z-1];
   }
   laplacian += ( psiPlus + psiMinus - cudaP(2.)*center )*dzInv*dzInv; 
@@ -342,7 +342,7 @@ __device__ pyComplex vortexCore( int nWidth, int nHeight, int nDepth, cudaP xMin
   Vtrap = (gammaX*x*x + gammaY*y*y + gammaZ*z*z)*cudaP(0.5)*center;
 //   Lz =  iComplex*( (psi_sh[threadIdx.x][threadIdx.y+1][threadIdx.z] - psi_sh[threadIdx.x][threadIdx.y-1][threadIdx.z])*(dyInv/2)*(x-x0) - (psi_sh[threadIdx.x+1][threadIdx.y][threadIdx.z] - psi_sh[threadIdx.x-1][threadIdx.y][threadIdx.z])*(dxInv/2)*(y-y0))*omega ;
   GP = cudaP(8000.)*abs(center)*abs(center)*center;  
-
+  
   return iComplex*(laplacian*cudaP(0.5) - Vtrap - GP - Lz);
 //   return iComplex*( - Vtrap - GP );
 //   return cudaP(0.5)*iComplex;
@@ -359,23 +359,21 @@ __global__ void eulerStep_kernel( int nWidth, int nHeight, int nDepth, cudaP slo
   int t_i = blockIdx.y*blockDim.y + threadIdx.y;
   int t_k = blockIdx.z*blockDim.z + threadIdx.z;
   int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-  int tid_b = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.z;
-  int bid = blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y;
+  int tid_b = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
+//   int bid = blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y;
   
   
   //Border blocks are skiped
-//   if ( ( blockIdx.x == 0 or blockDim.x == gridDim.x -1 ) or ( blockIdx.y == 0 or blockDim.y == gridDim.y -1 ) or ( blockIdx.z == 0 or blockDim.z == gridDim.z -1 ) ) return; 
+  if ( ( blockIdx.x == 0 or blockDim.x == gridDim.x -1 ) or ( blockIdx.y == 0 or blockDim.y == gridDim.y -1 ) or ( blockIdx.z == 0 or blockDim.z == gridDim.z -1 ) ) return; 
   //Unactive blocks are skiped
   __shared__ unsigned char activeBlock;
-  if (tid_b == 0 ) activeBlock = activity[bid];
+  if (tid_b == 0 ) activeBlock = activity[blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y];
   __syncthreads();
   if ( !activeBlock ) return;
   
   pyComplex value;
   value = vortexCore( nWidth, nHeight, nDepth, xMin, yMin, zMin, dx, dy, dz, t_i, t_j, t_k, tid, gammaX, gammaY, gammaZ, omega, x0, y0, psiStepIn );
   value = dt*value;
-//   pyComplex increment = value;
-  
   
   if (lastRK4Step ){
     pyComplex valueOut = psiRunge[tid] + slopeCoef*value/cudaP(6.); 
@@ -384,7 +382,6 @@ __global__ void eulerStep_kernel( int nWidth, int nHeight, int nDepth, cudaP slo
     psi_d[tid] = valueOut;
   }  
   else{
-//     pyComplex psiOut = psi_d[tid] + weight*value;
     psiStepOut[tid] = psi_d[tid] + weight*value;
     //add to rk4 final value
     psiRunge[tid] = psiRunge[tid] + slopeCoef*value/cudaP(6.);

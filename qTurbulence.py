@@ -24,7 +24,7 @@ useDevice = None
 for option in sys.argv:
   if option == "float": cudaP = "float"
   if option == "128" or option == "256": nPoints = int(option)
-  if option.find("device=") != -1: useDevice = int(option[-1]) 
+  if option.find("dev=") != -1: useDevice = int(option[-1]) 
  
 precision  = {"float":(np.float32, np.complex64), "double":(np.float64,np.complex128) } 
 cudaPre, cudaPreComplex = precision[cudaP]
@@ -38,7 +38,7 @@ nData = nWidth*nHeight*nDepth
 #Simulation Parameters
 dt = 0.005
 
-dtReal = 0.005
+dtReal = 0.01
 
 
 Lx = 30.0
@@ -50,7 +50,7 @@ zMax, zMin = Lz/2, -Lz/2
 dx, dy, dz = Lx/(nWidth-1), Ly/(nHeight-1), Lz/(nDepth-1 )
 Z, Y, X = np.mgrid[ zMin:zMax:nDepth*1j, yMin:yMax:nHeight*1j, xMin:xMax:nWidth*1j ]
 
-omega = 0.3
+omega = 0.8
 alpha = 1000.0
 gammaX = 1.0
 gammaY = 1.0
@@ -116,11 +116,6 @@ multiplyByScalarComplex = ElementwiseKernel(arguments="cudaP a, pycuda::complex<
 				name = "multiplyByScalarComplex_kernel",
 				preamble="#include <pycuda-complex.hpp>")
 ########################################################################
-copyComplexDtoD = ElementwiseKernel(arguments="pycuda::complex<cudaP> *psiIn, pycuda::complex<cudaP> *psiOut".replace("cudaP", cudaP),
-			      operation = "psiOut[i] = psiIn[i];",	
-			      name = "copyComplexDtoD_kernel",
-			      preamble="#include <pycuda-complex.hpp>")
-########################################################################
 getModulo = ElementwiseKernel(arguments="pycuda::complex<cudaP> *psi, cudaP *psiMod".replace("cudaP", cudaP),
 			      operation = "cudaP mod = abs(psi[i]);\
 					    psiMod[i] = mod*mod;".replace("cudaP", cudaP),	
@@ -170,40 +165,40 @@ def implicit_iteration( ):
   alpha= cudaPre( ( 0.5*(gpuarray.max(alphas_d) + gpuarray.min(alphas_d)) ).get() )  #OPTIMIZACION 
 ########################################################################
 def imaginaryStep():
-  [ implicit_iteration() for i in range(5) ]
+  [ implicit_iteration() for i in range(10) ]
 ########################################################################
 def rk4_iteration():
   cuda.memset_d8(activity_d.ptr, 0, nBlocks3D )
-  findActivityKernel( cudaPre(0.001), psi_d, activity_d, grid=grid3D, block=block3D )
+  findActivityKernel( cudaPre(0.00001), psi_d, activity_d, grid=grid3D, block=block3D )
   #Step 1
   slopeCoef = cudaPre( 1.0 )
-  weight = cudaPre( 0.5 )
+  weight    = cudaPre( 0.5 )
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
 		  psi_d, psiK2_d, psiK1_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )
   #Step 2
   slopeCoef = cudaPre( 2.0 )
-  weight = cudaPre( 0.5 )
+  weight    = cudaPre( 0.5 )
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
 		  psi_d, psiK1_d, psiK2_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )  
   #Step 3
   slopeCoef = cudaPre( 2.0 )
-  weight = cudaPre( 1. )
+  weight    = cudaPre( 1. )
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
 		  psi_d, psiK2_d, psiK1_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )    
   #Step 4
   slopeCoef = cudaPre( 1.0 )
-  weight = cudaPre( 1. )
+  weight    = cudaPre( 1. )
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
 		  psi_d, psiK1_d, psiK2_d, psiRunge_d, np.uint8(1), activity_d, grid=grid3D, block=block3D ) 
-  #copyComplexDtoD( psiRunge_d, psi_d )
-  #copyComplexDtoD( psiRunge_d, psiK2_d )
 ########################################################################
 def realStep():
-  [rk4_iteration() for i in range(5)]
+  cuda.memset_d8(activity_d.ptr, 0, nBlocks3D )
+  findActivityKernel( cudaPre(0.001), psi_d, activity_d, grid=grid3D, block=block3D )
+  [rk4_iteration() for i in range(10)]
 ########################################################################
 def stepFuntion():
   getModulo( psi_d, psiMod_d )
@@ -212,16 +207,17 @@ def stepFuntion():
   sendModuloToUCHAR( psiMod_d, plotData_d)
   copyToScreenArray()
 
-  cuda.memset_d8(activity_d.ptr, 0, nBlocks3D )
-  findActivityKernel( cudaPre(0.001), psi_d, activity_d, grid=grid3D, block=block3D )
-  if plotVar == 1: getActivityKernel( psiOther_d, activity_d, grid=grid3D, block=block3D )
-  if plotVar == 0:
-    getVelocityKernel( np.int32(neighbors), dx, dy, dz, psi_d, activity_d, psiOther_d, grid=grid3D, block=block3D )
-    maxVal = (gpuarray.max(psiOther_d)).get()
-    if maxVal > 0: multiplyByScalarReal( cudaPre(1./maxVal), psiOther_d )
-  #cuda.memset_d8(plotData_d_1.ptr, 0, nBlocks3D )
-  sendModuloToUCHAR( psiOther_d, plotData_d_1)
-  copyToScreenArray_1()
+  if volumeRender.nTextures == 2:
+    if not realDynamics:
+      cuda.memset_d8(activity_d.ptr, 0, nBlocks3D )
+      findActivityKernel( cudaPre(0.001), psi_d, activity_d, grid=grid3D, block=block3D )
+    if plotVar == 1: getActivityKernel( psiOther_d, activity_d, grid=grid3D, block=block3D )
+    if plotVar == 0:
+      getVelocityKernel( np.int32(neighbors), dx, dy, dz, psi_d, activity_d, psiOther_d, grid=grid3D, block=block3D )
+      maxVal = (gpuarray.max(psiOther_d)).get()
+      if maxVal > 0: multiplyByScalarReal( cudaPre(1./maxVal), psiOther_d )
+    sendModuloToUCHAR( psiOther_d, plotData_d_1)
+    copyToScreenArray_1()
   if applyTransition: timeTransition()
   if realDynamics: realStep()
   else: imaginaryStep()
@@ -232,8 +228,8 @@ def timeTransition():
   realDynamics = not realDynamics
   applyTransition = False
   if realDynamics:
-    copyComplexDtoD( psi_d, psiK2_d )
-    copyComplexDtoD( psi_d, psiRunge_d )
+    cuda.memcpy_dtod(psiK2_d.ptr, psi_d.ptr, psi_d.nbytes)
+    cuda.memcpy_dtod(psiRunge_d.ptr, psi_d.ptr, psi_d.nbytes)
     print "Real Dynamics"
   else:    
     #GetAlphas
@@ -242,9 +238,6 @@ def timeTransition():
     print "Imaginary Dynamics"
 
     
-
-  
-
 print "\nInitializing Data"  
 initialMemory = getFreeMemory( show=True )
 psi_h = np.zeros( X.shape, dtype=cudaPreComplex )
@@ -287,13 +280,13 @@ psiK2_d = gpuarray.to_gpu( psi_h )
 psiRunge_d = gpuarray.to_gpu( psi_h )
 #memory for plotting
 plotData_d = gpuarray.to_gpu(np.zeros([nDepth, nHeight, nWidth], dtype = np.uint8))
-plotData_d_1 = gpuarray.to_gpu(np.zeros([nDepth, nHeight, nWidth], dtype = np.uint8))
 volumeRender.plotData_dArray, copyToScreenArray = gpuArray3DtocudaArray( plotData_d )
-volumeRender.plotData_dArray_1, copyToScreenArray_1 = gpuArray3DtocudaArray( plotData_d_1 )
+if volumeRender.nTextures == 2:
+  plotData_d_1 = gpuarray.to_gpu(np.zeros([nDepth, nHeight, nWidth], dtype = np.uint8))
+  volumeRender.plotData_dArray_1, copyToScreenArray_1 = gpuArray3DtocudaArray( plotData_d_1 )
 print "Total Global Memory Used: {0:.2f} MB\n".format(float(initialMemory-getFreeMemory( show=False ))/1e6) 
 
 def keyboard(*args):
-  #global volumeRender.transferScale, volumeRender.brightness, volumeRender.density, volumeRender.transferOffset
   global plottingActive
   ESCAPE = '\033'
   # If escape is pressed, kill everything.
