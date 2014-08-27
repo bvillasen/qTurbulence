@@ -38,7 +38,7 @@ nData = nWidth*nHeight*nDepth
 #Simulation Parameters
 dt = 0.005
 
-dtReal = 0.01
+dtReal = 0.005
 
 
 Lx = 30.0
@@ -171,24 +171,28 @@ def rk4_iteration():
   cuda.memset_d8(activity_d.ptr, 0, nBlocks3D )
   findActivityKernel( cudaPre(0.00001), psi_d, activity_d, grid=grid3D, block=block3D )
   #Step 1
+  #if cudaP == "float": time.sleep(0.05)
   slopeCoef = cudaPre( 1.0 )
   weight    = cudaPre( 0.5 )
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
 		  psi_d, psiK2_d, psiK1_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )
   #Step 2
+  #if cudaP == "float": time.sleep(0.05)
   slopeCoef = cudaPre( 2.0 )
   weight    = cudaPre( 0.5 )
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
 		  psi_d, psiK1_d, psiK2_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )  
   #Step 3
+  #if cudaP == "float": time.sleep(0.05)
   slopeCoef = cudaPre( 2.0 )
   weight    = cudaPre( 1. )
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
 		  psi_d, psiK2_d, psiK1_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )    
   #Step 4
+  #if cudaP == "float": time.sleep(0.05)
   slopeCoef = cudaPre( 1.0 )
   weight    = cudaPre( 1. )
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
