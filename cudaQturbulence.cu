@@ -206,8 +206,8 @@ __global__ void getVelocity_kernel( int neighbors, cudaP dx, cudaP dy, cudaP dz,
   else if ( threadIdx.z == (blockDim.z-1) ) gradient_z = ( center - psi_sh[threadIdx.x][threadIdx.y][threadIdx.z-1] )*dzInv;
   else gradient_z = ( psi_sh[threadIdx.x][threadIdx.y][threadIdx.z+1] - psi_sh[threadIdx.x][threadIdx.y][threadIdx.z-1] ) * dzInv* cudaP(0.5);
 
-  __syncthreads();
-  cudaP rho = norm(center) + cudaP(0.000005);
+//   __syncthreads();
+  cudaP rho = norm(center) + cudaP(5e-6);
   cudaP velX = (center._M_re*gradient_x._M_im - center._M_im*gradient_x._M_re)/rho;
   cudaP velY = (center._M_re*gradient_y._M_im - center._M_im*gradient_y._M_re)/rho;
   cudaP velZ = (center._M_re*gradient_z._M_im - center._M_im*gradient_z._M_re)/rho; 

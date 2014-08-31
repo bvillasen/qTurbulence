@@ -6,23 +6,29 @@ from pycuda.compiler import SourceModule
 import pycuda.gpuarray as gpuarray
 #import pycuda.curandom as curandom
 from pycuda.reduction import ReductionKernel
+import h5py as h5
 
 #Add Modules from other directories
 currentDirectory = os.getcwd()
 parentDirectory = currentDirectory[:currentDirectory.rfind("/")]
 toolsDirectory = parentDirectory + "/tools"
 volumeRenderDirectory = parentDirectory + "/volumeRender"
+dataDir = "/home/bruno/Desktop/data/qTurbulence/"
 sys.path.extend( [toolsDirectory, volumeRenderDirectory] )
 
 import volumeRender
 from cudaTools import setCudaDevice, getFreeMemory, gpuArray3DtocudaArray
+from tools import ensureDirectory
 
 
 cudaP = "double"
 nPoints = 128
 useDevice = None
+usingAnimation = False
+timeRelax = 0.3
 for option in sys.argv:
   if option == "float": cudaP = "float"
+  if option == "anim": usingAnimation = True
   if option == "128" or option == "256": nPoints = int(option)
   if option.find("dev=") != -1: useDevice = int(option[-1]) 
  
@@ -36,10 +42,8 @@ nDepth = nPoints
 nData = nWidth*nHeight*nDepth
 
 #Simulation Parameters
-dt = 0.005
-
+dtImag = 0.005
 dtReal = 0.005
-
 
 Lx = 30.0
 Ly = 30.0
@@ -68,17 +72,19 @@ plotVar = 0
 dx, dy, dz = cudaPre(dx), cudaPre(dy), cudaPre(dz)
 Lx, Ly, Lz = cudaPre(Lx), cudaPre(Ly), cudaPre(Lz)
 xMin, yMin, zMin = cudaPre(xMin), cudaPre(yMin), cudaPre(zMin)
-dt, dtReal = cudaPre(dt), cudaPre(dtReal)
+dtImag, dtReal = cudaPre(dtImag), cudaPre(dtReal)
 omega, gammaX, gammaY, gammaZ = cudaPre(omega), cudaPre(gammaX), cudaPre(gammaY), cudaPre(gammaZ), 
 #Initialize openGL
-volumeRender.nWidth = nWidth
-volumeRender.nHeight = nHeight
-volumeRender.nDepth = nDepth
-volumeRender.windowTitle = "Quantum Turbulence  nPoints={0}".format(nPoints)
-volumeRender.nTextures = 2
-volumeRender.initGL()
+if usingAnimation:
+  volumeRender.nWidth = nWidth
+  volumeRender.nHeight = nHeight
+  volumeRender.nDepth = nDepth
+  volumeRender.windowTitle = "Quantum Turbulence  nPoints={0}".format(nPoints)
+  volumeRender.nTextures = 1
+  volumeRender.initGL()
+  
 #initialize pyCUDA context 
-cudaDevice = setCudaDevice( devN=useDevice, usingAnimation=True )
+cudaDevice = setCudaDevice( devN=useDevice, usingAnimation=usingAnimation)
 
 #set thread grid for CUDA kernels
 block_size_x, block_size_y, block_size_z = 8,8,8   #hardcoded, tune to your needs
@@ -156,7 +162,7 @@ def implicit_iteration( ):
   implicitStep1( xMin, yMin, zMin, dx, dy, dz, alpha,  omega,  gammaX,  gammaY,  gammaZ,
 		  partialX_d, partialY_d, psi_d, G_d, x0, y0, grid=grid3D, block=block3D)
   fftPlan.execute( G_d )
-  implicitStep2( dt, fftKx_d , fftKy_d, fftKz_d, alpha, psiFFT_d, G_d, block=block3D, grid=grid3D) 
+  implicitStep2( dtImag, fftKx_d , fftKy_d, fftKz_d, alpha, psiFFT_d, G_d, block=block3D, grid=grid3D) 
   fftPlan.execute( psiFFT_d, psi_d, inverse=True)  
   #setBoundryConditionsKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), psi_d, block=block3D, grid=grid3D)  
   normalize(dx, dy, dz, psi_d)
@@ -171,28 +177,24 @@ def rk4_iteration():
   cuda.memset_d8(activity_d.ptr, 0, nBlocks3D )
   findActivityKernel( cudaPre(0.00001), psi_d, activity_d, grid=grid3D, block=block3D )
   #Step 1
-  #if cudaP == "float": time.sleep(0.05)
   slopeCoef = cudaPre( 1.0 )
   weight    = cudaPre( 0.5 )
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
 		  psi_d, psiK2_d, psiK1_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )
   #Step 2
-  #if cudaP == "float": time.sleep(0.05)
   slopeCoef = cudaPre( 2.0 )
   weight    = cudaPre( 0.5 )
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
 		  psi_d, psiK1_d, psiK2_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )  
   #Step 3
-  #if cudaP == "float": time.sleep(0.05)
   slopeCoef = cudaPre( 2.0 )
   weight    = cudaPre( 1. )
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
 		  psi_d, psiK2_d, psiK1_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )    
   #Step 4
-  #if cudaP == "float": time.sleep(0.05)
   slopeCoef = cudaPre( 1.0 )
   weight    = cudaPre( 1. )
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
@@ -200,8 +202,8 @@ def rk4_iteration():
 		  psi_d, psiK1_d, psiK2_d, psiRunge_d, np.uint8(1), activity_d, grid=grid3D, block=block3D ) 
 ########################################################################
 def realStep():
-  cuda.memset_d8(activity_d.ptr, 0, nBlocks3D )
-  findActivityKernel( cudaPre(0.001), psi_d, activity_d, grid=grid3D, block=block3D )
+  #cuda.memset_d8(activity_d.ptr, 0, nBlocks3D )
+  #findActivityKernel( cudaPre(0.001), psi_d, activity_d, grid=grid3D, block=block3D )
   [rk4_iteration() for i in range(10)]
 ########################################################################
 def stepFuntion():
@@ -240,12 +242,33 @@ def timeTransition():
     getAlphas( dx, dy, dz, xMin, yMin, zMin, gammaX, gammaY, gammaZ, psi_d, alphas_d, block = block3D, grid=grid3D)
     alpha= cudaPre( ( 0.5*(gpuarray.max(alphas_d) + gpuarray.min(alphas_d)) ).get() )  #OPTIMIZACION 
     print "Imaginary Dynamics"
-
+########################################################################
+def loadState( fileName = "psi.hdf5" ):
+  dataFile = h5.File( dataDir + fileName ,'r')
+  dataAll = dataFile.get("psi")[...]
+  print '\nLoading data... \n file: {0} \n '.format(fileName )
+  return dataAll[...]
+########################################################################
+def saveState():
+  ensureDirectory( dataDir )
+  psi_h = psi_d.get()
+  print "Saving Data"
+  np.savetxt(dataDir + "psi_re.dat", psi_h.real.reshape(nData) )
+  np.savetxt(dataDir + "psi_im.dat", psi_h.imag.reshape(nData) )
+  dataFile = h5.File( dataDir + 'psi.hdf5' ,'w')
+  dataFile.create_dataset( "psi", data=psi_d.get(), compression='lzf')
+  dataFile.close()
+  print "Data Saved: {0}\n".format( dataDir )
+#######################################################################
     
 print "\nInitializing Data"  
 initialMemory = getFreeMemory( show=True )
 psi_h = np.zeros( X.shape, dtype=cudaPreComplex )
 psi_h.real = gaussian3D ( X, Y, Z, gammaX, gammaY, gammaZ, random=True ) 
+#####################################################
+#Load Data
+psi_h = loadState().astype(cudaPreComplex)
+#####################################################
 print " Making FFT plan"
 from pyfft.cuda import Plan
 fftPlan = Plan((nDepth, nHeight, nWidth),  dtype=cudaPreComplex)  
@@ -328,10 +351,10 @@ def keyboard(*args):
 
 def specialKeyboardFunc( key, x, y ):
   global plotVar, neighbors, plottingActive, applyTransition
-  if key== volumeRender.GLUT_KEY_UP:
-    neighbors += 1
-    if neighbors == 3: neighbors = 1
-    print "Neighbors: ", neighbors
+  #if key== volumeRender.GLUT_KEY_UP:
+    #neighbors += 1
+    #if neighbors == 3: neighbors = 1
+    #print "Neighbors: ", neighbors
   if key== volumeRender.GLUT_KEY_DOWN:
     plottingActive = not plottingActive
     if plottingActive: print "plottingActive"
@@ -340,16 +363,31 @@ def specialKeyboardFunc( key, x, y ):
     if plotVar == 2: plotVar = 0
   if key== volumeRender.GLUT_KEY_LEFT:
     applyTransition = True 
-  
-  
-#configure volumeRender functions 
-volumeRender.viewTranslation[2] = -2
-volumeRender.keyboard = keyboard
-volumeRender.specialKeys = specialKeyboardFunc
-volumeRender.stepFunc = stepFuntion
 
-#imaginaryStep()
 
-#run volumeRender animation
-volumeRender.animate()
+
+#print "Starting Imaginary Dynamics: {0} timeUnits ".format( timeRelax )  
+#simulationTime = -timeRelax 
+#while simulationTime < 0:
+  #imaginaryStep()
+  #simulationTime += dtImag
+#print "  End Imaginary Dynamics\n "   
+#saveState()
+
+applyTransition = True
+timeTransition() 
+#cuda.memset_d8(activity_d.ptr, 1, nBlocks3D )
+endTime = 1
+nIterations = int( endTime/dtReal )
+print "Starting Real Dynamics: {0} timeUnits ".format( endTime )
+[ rk4_iteration() for i in range(nIterations) ]
+
+#configure volumeRender functions  
+if usingAnimation: 
+  volumeRender.viewTranslation[2] = -2
+  volumeRender.keyboard = keyboard
+  volumeRender.specialKeys = specialKeyboardFunc
+  volumeRender.stepFunc = stepFuntion
+  #run volumeRender animation
+  volumeRender.animate()
 
