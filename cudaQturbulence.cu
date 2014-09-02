@@ -24,7 +24,25 @@ __global__ void getAlphas_kernel( cudaP dx, cudaP dy, cudaP dz, cudaP xMin, cuda
 }
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-__global__ void solvePartialX_kernel( cudaP Lx, pyComplex *fftTrnf, pyComplex *partialxfft, cudaP *kxfft){
+__global__ void getLaplacian_kernel( pyComplex *fftTrnf, pyComplex *fftLaplacian, cudaP *kxfft, cudaP *kyfft, cudaP *kzfft){
+  int t_j = blockIdx.x*blockDim.x + threadIdx.x;
+  int t_i = blockIdx.y*blockDim.y + threadIdx.y;
+  int t_k = blockIdx.z*blockDim.z + threadIdx.z;
+  int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+
+  cudaP kx, ky, kz, k2;
+  kx = kxfft[t_j];
+  ky = kyfft[t_i];
+  kz = kzfft[t_k];
+  k2 = kx*kx + ky*ky + kz*kz;
+  
+  fftLaplacian[tid] = -k2 * fftTrnf[tid];
+}
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+__global__ void getPartialX_kernel( cudaP Lx, pyComplex *fftTrnf, pyComplex *partialxfft, cudaP *kxfft){
   int t_j = blockIdx.x*blockDim.x + threadIdx.x;
   int t_i = blockIdx.y*blockDim.y + threadIdx.y;
   int t_k = blockIdx.z*blockDim.z + threadIdx.z;
@@ -37,7 +55,7 @@ __global__ void solvePartialX_kernel( cudaP Lx, pyComplex *fftTrnf, pyComplex *p
 }
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-__global__ void solvePartialY_kernel( cudaP Ly, pyComplex *fftTrnf, pyComplex *partialyfft, cudaP *kyfft){
+__global__ void getPartialY_kernel( cudaP Ly, pyComplex *fftTrnf, pyComplex *partialyfft, cudaP *kyfft){
   int t_j = blockIdx.x*blockDim.x + threadIdx.x;
   int t_i = blockIdx.y*blockDim.y + threadIdx.y;
   int t_k = blockIdx.z*blockDim.z + threadIdx.z;
@@ -214,8 +232,6 @@ __global__ void getVelocity_kernel( int neighbors, cudaP dx, cudaP dy, cudaP dz,
 
   psiOther[tid] =  sqrt( velX*velX + velY*velY + velZ*velZ ) ;
 }
-
-
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 __device__ pyComplex vortexCore( int nWidth, int nHeight, int nDepth, cudaP xMin, cudaP yMin, cudaP zMin, 
@@ -300,6 +316,30 @@ __device__ pyComplex vortexCore( int nWidth, int nHeight, int nDepth, cudaP xMin
   return iComplex*(laplacian*cudaP(0.5) - Vtrap - GP - Lz);
 
 }
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+__device__ pyComplex vortexCore_fft( int nWidth, int nHeight, int nDepth, cudaP xMin, cudaP yMin, cudaP zMin, 
+				 cudaP dx, cudaP dy, cudaP dz, int t_i, int t_j, int t_k, int tid,
+				 cudaP gammaX, cudaP gammaY, cudaP gammaZ, cudaP omega, cudaP x0, cudaP y0, 
+				 pyComplex *psiStep, pyComplex *laplacian, pyComplex *partialX, pyComplex *partialY){
+  pyComplex center = psiStep[tid];
+  cudaP dxInv = cudaP(1.0)/dx;
+  cudaP dyInv = cudaP(1.0)/dy;
+  cudaP dzInv = cudaP(1.0)/dz;
+  cudaP x = t_j*dx + xMin;
+  cudaP y = t_i*dy + yMin;
+  cudaP z = t_k*dz + zMin;
+  
+  pyComplex iComplex( cudaP(0.), cudaP(1.) );
+  pyComplex Vtrap, GP, Lz; 
+  Vtrap = (gammaX*x*x + gammaY*y*y + gammaZ*z*z)*cudaP(0.5)*center;
+  GP = cudaP(8000.)*norm(center)*center;
+  Lz = iComplex*( partialY[tid] - partialX[tid] )*omega;
+  
+  return iComplex * ( laplacian[tid]*cudaP(0.5) - Vtrap - GP - Lz );
+
+}
 ////////////////////////////////////////////////////////////////////////////////
 //////////////////////           EULER                //////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
@@ -343,3 +383,46 @@ __global__ void eulerStep_kernel( int nWidth, int nHeight, int nDepth, cudaP slo
   }
 }
 
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+__global__ void eulerStep_fft_kernel( int nWidth, int nHeight, int nDepth, cudaP slopeCoef, cudaP weight, 
+				      cudaP xMin, cudaP yMin, cudaP zMin, cudaP dx, cudaP dy, cudaP dz, cudaP dt, 
+				      cudaP gammaX, cudaP gammaY, cudaP gammaZ, cudaP x0, cudaP y0, cudaP omega,
+				      pyComplex *psi_d, pyComplex *psiStepIn, pyComplex *psiStepOut, pyComplex *psiRunge,
+				      pyComplex *laplacian, pyComplex *partialX, pyComplex *partialY,
+				      unsigned char lastRK4Step, unsigned char *activity ){
+  int t_j = blockIdx.x*blockDim.x + threadIdx.x;
+  int t_i = blockIdx.y*blockDim.y + threadIdx.y;
+  int t_k = blockIdx.z*blockDim.z + threadIdx.z;
+  int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+  int tid_b = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
+//   int bid = blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y;
+  
+  
+  //Border blocks are skiped
+  if ( ( blockIdx.x == 0 or blockDim.x == gridDim.x -1 ) or ( blockIdx.y == 0 or blockDim.y == gridDim.y -1 ) or ( blockIdx.z == 0 or blockDim.z == gridDim.z -1 ) ) return; 
+  //Unactive blocks are skiped
+  __shared__ unsigned char activeBlock;
+  if (tid_b == 0 ) activeBlock = activity[blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y];
+  __syncthreads();
+  if ( !activeBlock ) return;
+  
+  pyComplex value;
+  value = vortexCore_fft( nWidth, nHeight, nDepth, xMin, yMin, zMin, 
+		      dx, dy, dz, t_i, t_j, t_k, tid, 
+		      gammaX, gammaY, gammaZ, omega, x0, y0, 
+		      psiStepIn, laplacian, partialX, partialY  );
+  value = dt*value;
+  
+  if (lastRK4Step ){
+    pyComplex valueOut = psiRunge[tid] + slopeCoef*value/cudaP(6.); 
+    psiRunge[tid] = valueOut;
+    psiStepOut[tid] = valueOut;
+    psi_d[tid] = valueOut;
+  }  
+  else{
+    psiStepOut[tid] = psi_d[tid] + weight*value;
+    //add to rk4 final value
+    psiRunge[tid] = psiRunge[tid] + slopeCoef*value/cudaP(6.);
+  }
+}

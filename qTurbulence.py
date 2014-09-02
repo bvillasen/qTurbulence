@@ -101,8 +101,9 @@ cudaCodeString_raw = cudaCodeFile.read().replace( "cudaP", cudaP )
 cudaCodeString = cudaCodeString_raw % { "THREADS_PER_BLOCK":block3D[0]*block3D[1]*block3D[2], "B_WIDTH":block3D[0], "B_HEIGHT":block3D[1], "B_DEPTH":block3D[2] }
 cudaCode = SourceModule(cudaCodeString)
 getAlphas = cudaCode.get_function( "getAlphas_kernel" )
-solvePartialX = cudaCode.get_function( "solvePartialX_kernel" )
-solvePartialY = cudaCode.get_function( "solvePartialY_kernel" )
+getLaplacian = cudaCode.get_function( "getLaplacian_kernel" ) #V_FFT
+getPartialX = cudaCode.get_function( "getPartialX_kernel" )
+getPartialY = cudaCode.get_function( "getPartialY_kernel" )
 setBoundryConditionsKernel = cudaCode.get_function( 'setBoundryConditions_kernel' )
 implicitStep1 = cudaCode.get_function( "implicitStep1_kernel" )
 implicitStep2 = cudaCode.get_function( "implicitStep2_kernel" )
@@ -110,6 +111,7 @@ findActivityKernel = cudaCode.get_function( "findActivity_kernel" )
 getActivityKernel = cudaCode.get_function( "getActivity_kernel" )
 getVelocityKernel = cudaCode.get_function( "getVelocity_kernel" )
 eulerStepKernel = cudaCode.get_function( "eulerStep_kernel" )
+eulerStep_FFTKernel = cudaCode.get_function( "eulerStep_fft_kernel" )  ##V_FFT
 ########################################################################
 from pycuda.elementwise import ElementwiseKernel
 ########################################################################
@@ -155,8 +157,8 @@ def implicit_iteration( ):
   #Make FFT
   fftPlan.execute( psi_d, psiFFT_d )
   #get Derivatives
-  solvePartialX( Lx, psiFFT_d, partialX_d, fftKx_d, block=block3D, grid=grid3D) 
-  solvePartialY( Ly, psiFFT_d, partialY_d, fftKy_d, block=block3D, grid=grid3D) 
+  getPartialX( Lx, psiFFT_d, partialX_d, fftKx_d, block=block3D, grid=grid3D) 
+  getPartialY( Ly, psiFFT_d, partialY_d, fftKy_d, block=block3D, grid=grid3D) 
   fftPlan.execute( partialX_d, inverse=True )
   fftPlan.execute( partialY_d, inverse=True )   
   implicitStep1( xMin, yMin, zMin, dx, dy, dz, alpha,  omega,  gammaX,  gammaY,  gammaZ,
@@ -179,6 +181,38 @@ def rk4_iteration():
   #Step 1
   slopeCoef = cudaPre( 1.0 )
   weight    = cudaPre( 0.5 )
+  fftPlan.execute( psiK2_d, psiFFT_d )
+  getPartialX( Lx, psiFFT_d, partialX_d, fftKx_d, block=block3D, grid=grid3D) 
+  getPartialY( Ly, psiFFT_d, partialY_d, fftKy_d, block=block3D, grid=grid3D) 
+  eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
+		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
+		  psi_d, psiK2_d, psiK1_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )
+  #Step 2
+  slopeCoef = cudaPre( 2.0 )
+  weight    = cudaPre( 0.5 )
+  eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
+		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
+		  psi_d, psiK1_d, psiK2_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )  
+  #Step 3
+  slopeCoef = cudaPre( 2.0 )
+  weight    = cudaPre( 1. )
+  eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
+		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
+		  psi_d, psiK2_d, psiK1_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )    
+  #Step 4
+  slopeCoef = cudaPre( 1.0 )
+  weight    = cudaPre( 1. )
+  eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
+		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
+		  psi_d, psiK1_d, psiK2_d, psiRunge_d, np.uint8(1), activity_d, grid=grid3D, block=block3D ) 
+########################################################################
+def rk4_FFT_iteration():
+  cuda.memset_d8(activity_d.ptr, 0, nBlocks3D )
+  findActivityKernel( cudaPre(0.00001), psi_d, activity_d, grid=grid3D, block=block3D )
+  #Step 1
+  slopeCoef = cudaPre( 1.0 )
+  weight    = cudaPre( 0.5 )
+  #Plan.execute(
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
 		  psi_d, psiK2_d, psiK1_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )
@@ -267,11 +301,13 @@ psi_h = np.zeros( X.shape, dtype=cudaPreComplex )
 psi_h.real = gaussian3D ( X, Y, Z, gammaX, gammaY, gammaZ, random=True ) 
 #####################################################
 #Load Data
-psi_h = loadState().astype(cudaPreComplex)
+#psi_h = loadState().astype(cudaPreComplex)
 #####################################################
 print " Making FFT plan"
 from pyfft.cuda import Plan
 fftPlan = Plan((nDepth, nHeight, nWidth),  dtype=cudaPreComplex)  
+#from scikits.cuda.fft import fft, Plan
+#fftPlan = Plan((nDepth, nHeight, nWidth),  in_dtype=cudaPreComplex, out_dtype=cudaPreComplex)
 fftKx_h = np.zeros( nWidth, dtype=cudaPre )
 fftKy_h = np.zeros( nHeight, dtype=cudaPre )
 fftKz_h = np.zeros( nDepth, dtype=cudaPre )
@@ -305,6 +341,8 @@ psiOther_d = gpuarray.to_gpu(  np.zeros_like(psi_h.real) )
 psiK1_d = gpuarray.to_gpu( psi_h )
 psiK2_d = gpuarray.to_gpu( psi_h )
 psiRunge_d = gpuarray.to_gpu( psi_h )
+#For FFT version
+laplacian_d = gpuarray.to_gpu(  np.zeros_like(psi_h) )
 #memory for plotting
 plotData_d = gpuarray.to_gpu(np.zeros([nDepth, nHeight, nWidth], dtype = np.uint8))
 volumeRender.plotData_dArray, copyToScreenArray = gpuArray3DtocudaArray( plotData_d )
@@ -351,10 +389,6 @@ def keyboard(*args):
 
 def specialKeyboardFunc( key, x, y ):
   global plotVar, neighbors, plottingActive, applyTransition
-  #if key== volumeRender.GLUT_KEY_UP:
-    #neighbors += 1
-    #if neighbors == 3: neighbors = 1
-    #print "Neighbors: ", neighbors
   if key== volumeRender.GLUT_KEY_DOWN:
     plottingActive = not plottingActive
     if plottingActive: print "plottingActive"
@@ -374,13 +408,13 @@ def specialKeyboardFunc( key, x, y ):
 #print "  End Imaginary Dynamics\n "   
 #saveState()
 
-applyTransition = True
-timeTransition() 
-#cuda.memset_d8(activity_d.ptr, 1, nBlocks3D )
-endTime = 1
-nIterations = int( endTime/dtReal )
-print "Starting Real Dynamics: {0} timeUnits ".format( endTime )
-[ rk4_iteration() for i in range(nIterations) ]
+#applyTransition = True
+#timeTransition() 
+##cuda.memset_d8(activity_d.ptr, 1, nBlocks3D )
+#endTime = 1
+#nIterations = int( endTime/dtReal )
+#print "Starting Real Dynamics: {0} timeUnits ".format( endTime )
+#[ rk4_iteration() for i in range(nIterations) ]
 
 #configure volumeRender functions  
 if usingAnimation: 
