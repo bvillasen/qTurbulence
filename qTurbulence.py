@@ -47,7 +47,7 @@ nData = nWidth*nHeight*nDepth
 
 #Simulation Parameters
 dtImag = 0.005
-dtReal = 0.005
+dtReal = 0.012
 
 Lx = 30.0
 Ly = 30.0
@@ -58,7 +58,7 @@ zMax, zMin = Lz/2, -Lz/2
 dx, dy, dz = Lx/(nWidth-1), Ly/(nHeight-1), Lz/(nDepth-1 )
 Z, Y, X = np.mgrid[ zMin:zMax:nDepth*1j, yMin:yMax:nHeight*1j, xMin:xMax:nWidth*1j ]
 
-omega = 0.8
+omega = 0.6
 alpha = 1000.0
 gammaX = 1.0
 gammaY = 1.0
@@ -84,7 +84,7 @@ if usingAnimation:
   volumeRender.nHeight = nHeight
   volumeRender.nDepth = nDepth
   volumeRender.windowTitle = "Quantum Turbulence  nPoints={0}".format(nPoints)
-  volumeRender.nTextures = 2
+  volumeRender.nTextures = 1
   volumeRender.initGL()
   
 #initialize pyCUDA context 

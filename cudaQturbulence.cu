@@ -233,7 +233,7 @@ __global__ void getVelocity_kernel( int neighbors, cudaP dx, cudaP dy, cudaP dz,
 __device__ pyComplex vortexCore( const int nWidth, const int nHeight, const int nDepth, 
 				 const cudaP xMin, const cudaP yMin, const cudaP zMin, 
 				 const cudaP dx, const cudaP dy, const cudaP dz, 
-				 const int t_i, const int t_j, const int t_k, const int tid,
+				 const int t_i, const int t_j, const int t_k, const int tid, const int tid_b,
 				 const cudaP gammaX, const cudaP gammaY, const cudaP gammaZ, 
 				 const cudaP omega,  pyComplex *psiStep){
   pyComplex center = psiStep[tid];
@@ -242,16 +242,16 @@ __device__ pyComplex vortexCore( const int nWidth, const int nHeight, const int 
   psi_sh[threadIdx.x][threadIdx.y][threadIdx.z] = center;
   __syncthreads();
   
-  cudaP dxInv = cudaP(1.0)/dx;
-  cudaP dyInv = cudaP(1.0)/dy;
-  cudaP dzInv = cudaP(1.0)/dz;
-  cudaP x = t_j*dx + xMin;
-  cudaP y = t_i*dy + yMin;
-  cudaP z = t_k*dz + zMin;
+  const cudaP dxInv = cudaP(1.0)/dx;
+  const cudaP dyInv = cudaP(1.0)/dy;
+  const cudaP dzInv = cudaP(1.0)/dz;
+  const cudaP x = t_j*dx + xMin;
+  const cudaP y = t_i*dy + yMin;
+  const cudaP z = t_k*dz + zMin;
   
   const pyComplex iComplex( cudaP(0.), cudaP(1.) );
   pyComplex laplacian( cudaP(0.), cudaP(0.) );
-  pyComplex Lz( cudaP(0.), cudaP(0.) );
+//   pyComplex Lz( cudaP(0.), cudaP(0.) );
   pyComplex psiMinus, psiPlus;
   
   // laplacian X-term
@@ -274,7 +274,7 @@ __device__ pyComplex vortexCore( const int nWidth, const int nHeight, const int 
 // 	      psiStep[ (t_j+1) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y ] : 
 // 	      psi_sh[threadIdx.x+1][threadIdx.y][threadIdx.z];
   laplacian += ( psiPlus + psiMinus - cudaP(2.)*center )*dxInv*dxInv;
-  Lz += -iComplex*( psiPlus - psiMinus )*dxInv*cudaP(0.5)*y*omega;
+  pyComplex Lz =  -iComplex*( psiPlus - psiMinus )*dxInv*cudaP(0.5)*y;
   
   // laplacian Y-term
   if (threadIdx.y==0 ){
@@ -290,7 +290,7 @@ __device__ pyComplex vortexCore( const int nWidth, const int nHeight, const int 
     psiMinus = psi_sh[threadIdx.x][threadIdx.y-1][threadIdx.z];
   }
   laplacian += ( psiPlus + psiMinus - cudaP(2.)*center )*dyInv*dyInv;
-  Lz +=  iComplex*( psiPlus - psiMinus)*dyInv*cudaP(0.5)*x*omega;
+  Lz +=  iComplex*( psiPlus - psiMinus)*dyInv*cudaP(0.5)*x;
   
   // laplacian Z-term
   if (threadIdx.z==0 ){
@@ -312,8 +312,8 @@ __device__ pyComplex vortexCore( const int nWidth, const int nHeight, const int 
   Vtrap = (gammaX*x*x + gammaY*y*y + gammaZ*z*z)*cudaP(0.5)*center;
   GP = cudaP(8000.)*norm(center)*center;  
   
-  return iComplex*(laplacian*cudaP(0.5) - Vtrap - GP - Lz);
-
+  return iComplex*(laplacian*cudaP(0.5) - Vtrap - GP - Lz*omega);
+//   return iComplex*(laplacian*cudaP(0.5) - Vtrap - GP );
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -353,7 +353,7 @@ __global__ void eulerStep_kernel( const int nWidth, const int nHeight, const int
   const int t_i = blockIdx.y*blockDim.y + threadIdx.y;
   const int t_k = blockIdx.z*blockDim.z + threadIdx.z;
   const int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-//   const int tid_b = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
+  const int tid_b = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
 //   int bid = blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y;
   
   
@@ -361,13 +361,13 @@ __global__ void eulerStep_kernel( const int nWidth, const int nHeight, const int
   if ( ( blockIdx.x == 0 or blockDim.x == gridDim.x -1 ) or ( blockIdx.y == 0 or blockDim.y == gridDim.y -1 ) or ( blockIdx.z == 0 or blockDim.z == gridDim.z -1 ) ) return; 
   //Unactive blocks are skiped
   __shared__ unsigned char activeBlock;
-  if (threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y == 0 ) activeBlock = activity[blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y];
+  if ( tid_b == 0 ) activeBlock = activity[blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y];
   __syncthreads();
   if ( !activeBlock ) return;
   
   pyComplex value;
   value = vortexCore( nWidth, nHeight, nDepth, xMin, yMin, zMin, 
-		      dx, dy, dz, t_i, t_j, t_k, tid, 
+		      dx, dy, dz, t_i, t_j, t_k, tid, tid_b,
 		      gammaX, gammaY, gammaZ, omega, psiStepIn );
   value = dt*value;
   
