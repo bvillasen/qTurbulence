@@ -17,7 +17,7 @@ dataDir = "/home/bruno/Desktop/data/qTurbulence/"
 sys.path.extend( [toolsDirectory, volumeRenderDirectory] )
 
 import volumeRender
-from cudaTools import setCudaDevice, getFreeMemory, gpuArray3DtocudaArray
+from cudaTools import setCudaDevice, getFreeMemory, gpuArray3DtocudaArray, kernelMemoryInfo
 from tools import ensureDirectory
 
 
@@ -27,9 +27,11 @@ useDevice = None
 usingAnimation = False
 timeRelax = 0.3
 realFFT = False
+showKernelMemInfo = False
 for option in sys.argv:
   if option == "float": cudaP = "float"
   if option == "anim": usingAnimation = True
+  if option == "mem": showKernelMemInfo = True
   if option == "128" or option == "256": nPoints = int(option)
   if option.find("dev=") != -1: useDevice = int(option[-1]) 
   if option == "fft": realFFT = True
@@ -82,14 +84,14 @@ if usingAnimation:
   volumeRender.nHeight = nHeight
   volumeRender.nDepth = nDepth
   volumeRender.windowTitle = "Quantum Turbulence  nPoints={0}".format(nPoints)
-  volumeRender.nTextures = 1
+  volumeRender.nTextures = 2
   volumeRender.initGL()
   
 #initialize pyCUDA context 
 cudaDevice = setCudaDevice( devN=useDevice, usingAnimation=usingAnimation)
 
 #set thread grid for CUDA kernels
-block_size_x, block_size_y, block_size_z = 8,8,8   #hardcoded, tune to your needs
+block_size_x, block_size_y, block_size_z = 8,8,4   #hardcoded, tune to your needs
 gridx = nWidth // block_size_x + 1 * ( nWidth % block_size_x != 0 )
 gridy = nHeight // block_size_y + 1 * ( nHeight % block_size_y != 0 )
 gridz = nDepth // block_size_z + 1 * ( nDepth % block_size_z != 0 )
@@ -113,6 +115,10 @@ getActivityKernel = cudaCode.get_function( "getActivity_kernel" )
 getVelocityKernel = cudaCode.get_function( "getVelocity_kernel" )
 eulerStepKernel = cudaCode.get_function( "eulerStep_kernel" )
 eulerStep_FFTKernel = cudaCode.get_function( "eulerStep_fft_kernel" )  ##V_FFT
+if showKernelMemInfo: 
+  kernelMemoryInfo(eulerStepKernel, 'eulerStepKernel')
+  print ""
+
 ########################################################################
 from pycuda.elementwise import ElementwiseKernel
 ########################################################################
@@ -182,25 +188,25 @@ def rk4_iteration():
   slopeCoef = cudaPre( 1.0 )
   weight    = cudaPre( 0.5 )
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
-		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
+		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, omega,
 		  psi_d, psiK2_d, psiK1_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )
   #Step 2
   slopeCoef = cudaPre( 2.0 )
   weight    = cudaPre( 0.5 )
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
-		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
+		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, omega,
 		  psi_d, psiK1_d, psiK2_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )  
   #Step 3
   slopeCoef = cudaPre( 2.0 )
   weight    = cudaPre( 1. )
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
-		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
+		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, omega,
 		  psi_d, psiK2_d, psiK1_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )    
   #Step 4
   slopeCoef = cudaPre( 1.0 )
   weight    = cudaPre( 1. )
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
-		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
+		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, omega,
 		  psi_d, psiK1_d, psiK2_d, psiRunge_d, np.uint8(1), activity_d, grid=grid3D, block=block3D ) 
 ########################################################################
 def rk4_FFT_iteration():
@@ -419,8 +425,20 @@ def specialKeyboardFunc( key, x, y ):
   if key== volumeRender.GLUT_KEY_LEFT:
     applyTransition = True 
 
-
-
+######################################################################################
+######################################################################################
+if showKernelMemInfo: 
+  implicit_iteration()
+  implicit_iteration()
+  applyTransition = True
+  timeTransition() 
+  rk4_iteration()
+  rk4_iteration()
+  print "Precision: ", cudaP
+  print "Timing Info saved in: cuda_profile_1.log \n\n"
+  sys.exit()
+######################################################################################
+######################################################################################
 #print "Starting Imaginary Dynamics: {0} timeUnits ".format( timeRelax )  
 #simulationTime = -timeRelax 
 #while simulationTime < 0:
