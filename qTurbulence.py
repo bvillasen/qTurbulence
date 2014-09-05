@@ -26,11 +26,13 @@ nPoints = 128
 useDevice = None
 usingAnimation = False
 timeRelax = 0.3
+realFFT = False
 for option in sys.argv:
   if option == "float": cudaP = "float"
   if option == "anim": usingAnimation = True
   if option == "128" or option == "256": nPoints = int(option)
   if option.find("dev=") != -1: useDevice = int(option[-1]) 
+  if option == "fft": realFFT = True
  
 precision  = {"float":(np.float32, np.complex64), "double":(np.float64,np.complex128) } 
 cudaPre, cudaPreComplex = precision[cudaP]
@@ -101,9 +103,8 @@ cudaCodeString_raw = cudaCodeFile.read().replace( "cudaP", cudaP )
 cudaCodeString = cudaCodeString_raw % { "THREADS_PER_BLOCK":block3D[0]*block3D[1]*block3D[2], "B_WIDTH":block3D[0], "B_HEIGHT":block3D[1], "B_DEPTH":block3D[2] }
 cudaCode = SourceModule(cudaCodeString)
 getAlphas = cudaCode.get_function( "getAlphas_kernel" )
-getLaplacian = cudaCode.get_function( "getLaplacian_kernel" ) #V_FFT
-getPartialX = cudaCode.get_function( "getPartialX_kernel" )
-getPartialY = cudaCode.get_function( "getPartialY_kernel" )
+getFFTderivatives = cudaCode.get_function( "getFFTderivatives_kernel" ) #V_FFT
+getPartialsXY = cudaCode.get_function( "getPartialsXY_kernel" )
 setBoundryConditionsKernel = cudaCode.get_function( 'setBoundryConditions_kernel' )
 implicitStep1 = cudaCode.get_function( "implicitStep1_kernel" )
 implicitStep2 = cudaCode.get_function( "implicitStep2_kernel" )
@@ -157,8 +158,7 @@ def implicit_iteration( ):
   #Make FFT
   fftPlan.execute( psi_d, psiFFT_d )
   #get Derivatives
-  getPartialX( Lx, psiFFT_d, partialX_d, fftKx_d, block=block3D, grid=grid3D) 
-  getPartialY( Ly, psiFFT_d, partialY_d, fftKy_d, block=block3D, grid=grid3D) 
+  getPartialsXY( Lx, Ly, psiFFT_d, partialX_d, fftKx_d, partialY_d, fftKy_d, block=block3D, grid=grid3D) 
   fftPlan.execute( partialX_d, inverse=True )
   fftPlan.execute( partialY_d, inverse=True )   
   implicitStep1( xMin, yMin, zMin, dx, dy, dz, alpha,  omega,  gammaX,  gammaY,  gammaZ,
@@ -181,9 +181,6 @@ def rk4_iteration():
   #Step 1
   slopeCoef = cudaPre( 1.0 )
   weight    = cudaPre( 0.5 )
-  fftPlan.execute( psiK2_d, psiFFT_d )
-  getPartialX( Lx, psiFFT_d, partialX_d, fftKx_d, block=block3D, grid=grid3D) 
-  getPartialY( Ly, psiFFT_d, partialY_d, fftKy_d, block=block3D, grid=grid3D) 
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
 		  psi_d, psiK2_d, psiK1_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )
@@ -212,33 +209,57 @@ def rk4_FFT_iteration():
   #Step 1
   slopeCoef = cudaPre( 1.0 )
   weight    = cudaPre( 0.5 )
-  #Plan.execute(
-  eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
+  fftPlan.execute( psiK2_d, psiFFT_d )
+  getFFTderivatives( Lx, Ly, Lz, psiFFT_d, fftKx_d, fftKy_d, fftKz_d, partialX_d, partialY_d, laplacian_d, grid=grid3D, block=block3D )
+  fftPlan.execute( partialX_d,  inverse=True )
+  fftPlan.execute( partialY_d,  inverse=True )
+  fftPlan.execute( laplacian_d, inverse=True )
+  eulerStep_FFTKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
-		  psi_d, psiK2_d, psiK1_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )
+		  psi_d, psiK2_d, psiK1_d, psiRunge_d, laplacian_d, partialX_d, partialY_d,
+		  np.uint8(0), activity_d, grid=grid3D, block=block3D )
   #Step 2
   slopeCoef = cudaPre( 2.0 )
   weight    = cudaPre( 0.5 )
-  eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
+  fftPlan.execute( psiK1_d, psiFFT_d )
+  getFFTderivatives( Lx, Ly, Lz, psiFFT_d, fftKx_d, fftKy_d, fftKz_d, partialX_d, partialY_d, laplacian_d, grid=grid3D, block=block3D )
+  fftPlan.execute( partialX_d,  inverse=True )
+  fftPlan.execute( partialY_d,  inverse=True )
+  fftPlan.execute( laplacian_d, inverse=True )
+  eulerStep_FFTKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
-		  psi_d, psiK1_d, psiK2_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )  
+		  psi_d, psiK1_d, psiK2_d, psiRunge_d, laplacian_d, partialX_d, partialY_d,
+		  np.uint8(0), activity_d, grid=grid3D, block=block3D )  
   #Step 3
   slopeCoef = cudaPre( 2.0 )
   weight    = cudaPre( 1. )
-  eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
+  fftPlan.execute( psiK2_d, psiFFT_d )
+  getFFTderivatives( Lx, Ly, Lz, psiFFT_d, fftKx_d, fftKy_d, fftKz_d, partialX_d, partialY_d, laplacian_d, grid=grid3D, block=block3D )
+  fftPlan.execute( partialX_d,  inverse=True )
+  fftPlan.execute( partialY_d,  inverse=True )
+  fftPlan.execute( laplacian_d, inverse=True )
+  eulerStep_FFTKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
-		  psi_d, psiK2_d, psiK1_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )    
+		  psi_d, psiK2_d, psiK1_d, psiRunge_d, laplacian_d, partialX_d, partialY_d,
+		  np.uint8(0), activity_d, grid=grid3D, block=block3D )    
   #Step 4
   slopeCoef = cudaPre( 1.0 )
   weight    = cudaPre( 1. )
-  eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
+  fftPlan.execute( psiK1_d, psiFFT_d )
+  getFFTderivatives( Lx, Ly, Lz, psiFFT_d, fftKx_d, fftKy_d, fftKz_d, partialX_d, partialY_d, laplacian_d, grid=grid3D, block=block3D )
+  fftPlan.execute( partialX_d,  inverse=True )
+  fftPlan.execute( partialY_d,  inverse=True )
+  fftPlan.execute( laplacian_d, inverse=True )
+  eulerStep_FFTKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, x0, y0, omega,
-		  psi_d, psiK1_d, psiK2_d, psiRunge_d, np.uint8(1), activity_d, grid=grid3D, block=block3D ) 
+		  psi_d, psiK1_d, psiK2_d, psiRunge_d, laplacian_d, partialX_d, partialY_d,
+		  np.uint8(1), activity_d, grid=grid3D, block=block3D ) 
 ########################################################################
 def realStep():
   #cuda.memset_d8(activity_d.ptr, 0, nBlocks3D )
   #findActivityKernel( cudaPre(0.001), psi_d, activity_d, grid=grid3D, block=block3D )
-  [rk4_iteration() for i in range(10)]
+  if realFFT: [rk4_FFT_iteration() for i in range(10)]
+  else: [rk4_iteration() for i in range(10)]
 ########################################################################
 def stepFuntion():
   getModulo( psi_d, psiMod_d )

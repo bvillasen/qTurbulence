@@ -22,49 +22,45 @@ __global__ void getAlphas_kernel( cudaP dx, cudaP dy, cudaP dz, cudaP xMin, cuda
   cudaP result = (cudaP(0.5)*( gammaX*x*x + gammaY*y*y + gammaZ*z*z )) + g*psi_mod*psi_mod;
   alphas[tid] = result;
 }
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-__global__ void getLaplacian_kernel( pyComplex *fftTrnf, pyComplex *fftLaplacian, cudaP *kxfft, cudaP *kyfft, cudaP *kzfft){
-  int t_j = blockIdx.x*blockDim.x + threadIdx.x;
-  int t_i = blockIdx.y*blockDim.y + threadIdx.y;
-  int t_k = blockIdx.z*blockDim.z + threadIdx.z;
-  int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
 
-  cudaP kx, ky, kz, k2;
-  kx = kxfft[t_j];
-  ky = kyfft[t_i];
-  kz = kzfft[t_k];
-  k2 = kx*kx + ky*ky + kz*kz;
-  
-  fftLaplacian[tid] = -k2 * fftTrnf[tid];
-}
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-__global__ void getPartialX_kernel( cudaP Lx, pyComplex *fftTrnf, pyComplex *partialxfft, cudaP *kxfft){
+__global__ void getPartialsXY_kernel( cudaP Lx, cudaP Ly, pyComplex *fftTrnf,
+				      pyComplex *partialxfft, cudaP *kxfft,
+				      pyComplex *partialyfft, cudaP *kyfft ){
   int t_j = blockIdx.x*blockDim.x + threadIdx.x;
   int t_i = blockIdx.y*blockDim.y + threadIdx.y;
   int t_k = blockIdx.z*blockDim.z + threadIdx.z;
   int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
 
   cudaP kx = kxfft[t_j];
+  cudaP ky = kyfft[t_i];
   pyComplex i_complex( cudaP(0.), cudaP(1.0));
+  pyComplex psiFFT = fftTrnf[tid];
   
-  partialxfft[tid] = kx*i_complex*fftTrnf[tid];
+  partialxfft[tid] = kx*i_complex*psiFFT;
+  partialyfft[tid] = ky*i_complex*psiFFT;
 }
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-__global__ void getPartialY_kernel( cudaP Ly, pyComplex *fftTrnf, pyComplex *partialyfft, cudaP *kyfft){
+__global__ void getFFTderivatives_kernel( cudaP Lx, cudaP Ly, cudaP Lz, pyComplex *fftTrnf,
+				      cudaP *kxfft, cudaP *kyfft, cudaP *kzfft,
+				      pyComplex *partialxfft, pyComplex *partialyfft, pyComplex *laplacianfft){
   int t_j = blockIdx.x*blockDim.x + threadIdx.x;
   int t_i = blockIdx.y*blockDim.y + threadIdx.y;
   int t_k = blockIdx.z*blockDim.z + threadIdx.z;
   int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
 
+  cudaP kx = kxfft[t_j];
   cudaP ky = kyfft[t_i];
+  cudaP kz = kzfft[t_k];
+  cudaP k2 = kx*kx + ky*ky + kz*kz;
   pyComplex i_complex( cudaP(0.), cudaP(1.0));
+  pyComplex psiFFT = fftTrnf[tid];
   
-  partialyfft[tid] = ky*i_complex*fftTrnf[tid];
+  partialxfft[tid] = kx*i_complex*psiFFT;
+  partialyfft[tid] = ky*i_complex*psiFFT;
+  laplacianfft[tid] = -k2 * psiFFT;
 }
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
