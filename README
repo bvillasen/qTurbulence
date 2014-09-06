@@ -1,0 +1,16 @@
+To run:
+
+$ python qTurbulence.py anim 
+
+This will run shared-memory version in double precision.
+
+For single precision add "float" to the arguments
+For texture version add "tex" to the arguments
+
+Example: run texture single precicion:
+$ python qTurbulence.py anim float tex
+
+For kernel memory information add "mem"   to the arguments
+
+The order of the arguments doesen't matter.
+

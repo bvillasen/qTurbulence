@@ -48,7 +48,7 @@ nData = nWidth*nHeight*nDepth
 
 #Simulation Parameters
 dtImag = 0.005
-dtReal = 0.012
+dtReal = 0.005
 
 Lx = 30.0
 Ly = 30.0
