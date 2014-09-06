@@ -352,23 +352,7 @@ __device__ pyComplex vortexCore_tex
 	      cudaP dx, cudaP dy, cudaP dz, int t_i, int t_j, int t_k, 
 	      cudaP gammaX, cudaP gammaY, cudaP gammaZ, cudaP omega ){
   
-  pyComplex iComplex( 0, 1.0f );
-  pyComplex center, right, left, up, down, top, bottom;
-  center._M_re = fp_tex3D(tex_psiReal, (float)t_j, (float)t_i, (float)t_k);
-  center._M_im = fp_tex3D(tex_psiImag, (float)t_j, (float)t_i, (float)t_k);
-  up._M_re =     fp_tex3D(tex_psiReal, (float)t_j, (float)t_i+1, (float)t_k);
-  up._M_im =     fp_tex3D(tex_psiImag, (float)t_j, (float)t_i+1, (float)t_k);
-  down._M_re =   fp_tex3D(tex_psiReal, (float)t_j, (float)t_i-1, (float)t_k);
-  down._M_im =   fp_tex3D(tex_psiImag, (float)t_j, (float)t_i-1, (float)t_k);
-  right._M_re =  fp_tex3D(tex_psiReal, (float)t_j+1, (float)t_i, (float)t_k);
-  right._M_im =  fp_tex3D(tex_psiImag, (float)t_j+1, (float)t_i, (float)t_k);
-  left._M_re =   fp_tex3D(tex_psiReal, (float)t_j-1, (float)t_i, (float)t_k);
-  left._M_im =   fp_tex3D(tex_psiImag, (float)t_j-1, (float)t_i, (float)t_k);
-  top._M_re =    fp_tex3D(tex_psiReal, (float)t_j, (float)t_i, (float)t_k+1);
-  top._M_im =    fp_tex3D(tex_psiImag, (float)t_j, (float)t_i, (float)t_k+1);
-  bottom._M_re = fp_tex3D(tex_psiReal, (float)t_j, (float)t_i, (float)t_k-1);
-  bottom._M_im = fp_tex3D(tex_psiImag, (float)t_j, (float)t_i, (float)t_k-1);
-  
+
   cudaP dxInv = 1.0f/dx;
 //   cudaP dyInv = 1.0f/dy;
 //   cudaP dzInv = 1.0f/dz;
@@ -376,16 +360,40 @@ __device__ pyComplex vortexCore_tex
   cudaP y = t_i*dy + yMin;
   cudaP z = t_k*dz + zMin;
   
-  pyComplex laplacian, Lz;
-  cudaP Vtrap_GP;
-  laplacian = (up + down - cudaP(2)*center )*dxInv*dxInv + (right + left - cudaP(2)*center )*dxInv*dxInv + (top + bottom - cudaP(2)*center )*dxInv*dxInv;
+  pyComplex iComplex( 0, 1.0f );
+  pyComplex center, psiPlus, psiMinus, laplacian;
+  pyComplex Lz;
+  center._M_re = fp_tex3D(tex_psiReal, t_j, t_i, t_k);
+  center._M_im = fp_tex3D(tex_psiImag, t_j, t_i, t_k);
 
+  psiPlus._M_re  =  fp_tex3D(tex_psiReal, t_j+1, t_i, t_k);
+  psiPlus._M_im  =  fp_tex3D(tex_psiImag, t_j+1, t_i, t_k);
+  psiMinus._M_re =  fp_tex3D(tex_psiReal, t_j-1, t_i, t_k);
+  psiMinus._M_im =  fp_tex3D(tex_psiImag, t_j-1, t_i, t_k);
+  laplacian = (psiPlus + psiMinus - cudaP(2)*center )*dxInv*dxInv;
+  Lz = iComplex*( psiMinus - psiPlus )*dxInv*cudaP(0.5)*y ;
+  
+  psiPlus._M_re  =  fp_tex3D(tex_psiReal, t_j, t_i+1, t_k);
+  psiPlus._M_im  =  fp_tex3D(tex_psiImag, t_j, t_i+1, t_k);
+  psiMinus._M_re =  fp_tex3D(tex_psiReal, t_j, t_i-1, t_k);
+  psiMinus._M_im =  fp_tex3D(tex_psiImag, t_j, t_i-1, t_k);
+  laplacian += (psiPlus + psiMinus - cudaP(2)*center )*dxInv*dxInv;
+  Lz +=  iComplex*( (psiPlus - psiMinus)*dxInv*cudaP(0.5)*x );
+  
+  psiPlus._M_re =    fp_tex3D(tex_psiReal, t_j, t_i, t_k+1);
+  psiPlus._M_im =    fp_tex3D(tex_psiImag, t_j, t_i, t_k+1);
+  psiMinus._M_re = fp_tex3D(tex_psiReal, t_j, t_i, t_k-1);
+  psiMinus._M_im = fp_tex3D(tex_psiImag, t_j, t_i, t_k-1);
+  laplacian +=  (psiPlus + psiMinus - cudaP(2)*center )*dxInv*dxInv;
+
+  
+  cudaP Vtrap_GP;
   Vtrap_GP = 8000*norm(center) + (gammaX*x*x + gammaY*y*y + gammaZ*z*z)*cudaP(0.5); 
-  Lz =  iComplex*( (up - down)*dxInv*cudaP(0.5)*x - (right - left)*dxInv*cudaP(0.5)*y ) ;
+  
    
 
   return iComplex*(laplacian*cudaP(0.5) - (Vtrap_GP)*center - Lz*omega);
-
+//   return iComplex*(laplacian*cudaP(0.5) - (Vtrap_GP)*center );
 }
 ////////////////////////////////////////////////////////////////////////////////
 //////////////////////           EULER                //////////////////////////
@@ -465,18 +473,17 @@ __global__ void eulerStep_texture_kernel( const int nWidth, const int nHeight, c
   if (lastRK4Step ){
     value = psiRunge[tid] + slopeCoef*value/cudaP(6.); 
     psiRunge[tid] = value;
-//     psiStepOut[tid] = value;
     psi_d[tid] = value;
     surf3Dwrite(  value._M_re, surf_psiReal,  t_j*sizeof(cudaP), t_i, t_k,  cudaBoundaryModeClamp);
     surf3Dwrite(  value._M_im, surf_psiImag,  t_j*sizeof(cudaP), t_i, t_k,  cudaBoundaryModeClamp);    
   }  
   else{
-//     psiStepOut[tid] = psi_d[tid] + weight*value;
+    //add to rk4 final value
     psiRunge[tid] = psiRunge[tid] + slopeCoef*value/cudaP(6.);
     value = psi_d[tid] + weight*value;
     surf3Dwrite(  value._M_re, surf_psiReal,  t_j*sizeof(cudaP), t_i, t_k,  cudaBoundaryModeClamp);
     surf3Dwrite(  value._M_im, surf_psiImag,  t_j*sizeof(cudaP), t_i, t_k,  cudaBoundaryModeClamp);
-    //add to rk4 final value
+   
     
   }
 }
