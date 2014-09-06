@@ -107,7 +107,11 @@ nBlocks3D = grid3D[0]*grid3D[1]*grid3D[2]
 print "\nCompiling CUDA code"
 cudaCodeFile = open("cudaQturbulence.cu","r")
 cudaCodeString_raw = cudaCodeFile.read().replace( "cudaP", cudaP ) 
-cudaCodeString = cudaCodeString_raw % { "THREADS_PER_BLOCK":block3D[0]*block3D[1]*block3D[2], "B_WIDTH":block3D[0], "B_HEIGHT":block3D[1], "B_DEPTH":block3D[2] }
+cudaCodeString = cudaCodeString_raw % { 
+  "THREADS_PER_BLOCK":block3D[0]*block3D[1]*block3D[2], 
+  "B_WIDTH":block3D[0], "B_HEIGHT":block3D[1], "B_DEPTH":block3D[2],
+  'blockDim.x': block3D[0], 'blockDim.y': block3D[1], 'blockDim.z': block3D[2],
+  'gridDim.x': grid3D[0], 'gridDim.y': grid3D[1], 'gridDim.z': grid3D[2] }
 cudaCode = SourceModule(cudaCodeString)
 getAlphas = cudaCode.get_function( "getAlphas_kernel" )
 getFFTderivatives = cudaCode.get_function( "getFFTderivatives_kernel" ) #V_FFT
@@ -232,7 +236,7 @@ def rk4_texture_iteration():
   tex_psiImag.set_array( psiK2Imag_array )
   surf_psiReal.set_array( psiK1Real_array )
   surf_psiImag.set_array( psiK1Imag_array )
-  eulerStep_textKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
+  eulerStep_textKernel( slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, omega,
 		  psi_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )
   #Step 2
@@ -242,7 +246,7 @@ def rk4_texture_iteration():
   tex_psiImag.set_array( psiK1Imag_array )
   surf_psiReal.set_array( psiK2Real_array )
   surf_psiImag.set_array( psiK2Imag_array )
-  eulerStep_textKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
+  eulerStep_textKernel(  slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, omega,
 		  psi_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )  
   #Step 3
@@ -252,7 +256,7 @@ def rk4_texture_iteration():
   tex_psiImag.set_array( psiK2Imag_array )
   surf_psiReal.set_array( psiK1Real_array )
   surf_psiImag.set_array( psiK1Imag_array )
-  eulerStep_textKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
+  eulerStep_textKernel(  slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, omega,
 		  psi_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )    
   #Step 4
@@ -262,7 +266,7 @@ def rk4_texture_iteration():
   tex_psiImag.set_array( psiK1Imag_array )
   surf_psiReal.set_array( psiK2Real_array )
   surf_psiImag.set_array( psiK2Imag_array )
-  eulerStep_textKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
+  eulerStep_textKernel(  slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, omega,
 		  psi_d, psiRunge_d, np.uint8(1), activity_d, grid=grid3D, block=block3D ) 
 ########################################################################
@@ -423,7 +427,7 @@ G_d = gpuarray.to_gpu(  np.zeros_like(psi_h) )
 fftKx_d = gpuarray.to_gpu( fftKx_h )         #OPTIMIZATION
 fftKy_d = gpuarray.to_gpu( fftKy_h )
 fftKz_d = gpuarray.to_gpu( fftKz_h )
-activity_d = gpuarray.to_gpu( np.zeros( nBlocks3D, dtype=np.uint8 ) )
+activity_d = gpuarray.to_gpu( np.ones( nBlocks3D, dtype=np.uint8 ) )
 psiOther_d = gpuarray.to_gpu(  np.zeros_like(psi_h.real) )
 psiK1_d = gpuarray.to_gpu( psi_h )
 psiK2_d = gpuarray.to_gpu( psi_h )

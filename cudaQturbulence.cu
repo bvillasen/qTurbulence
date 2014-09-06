@@ -129,19 +129,19 @@ __global__ void implicitStep2_kernel( cudaP dt, cudaP *kx, cudaP *ky, cudaP *kz,
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 __global__ void findActivity_kernel( cudaP minDensity, pyComplex *psi_d, unsigned char *activity ){
-  int t_j = blockIdx.x*blockDim.x + threadIdx.x;
-  int t_i = blockIdx.y*blockDim.y + threadIdx.y;
-  int t_k = blockIdx.z*blockDim.z + threadIdx.z;
-  int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-  int tid_b = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
-//   int bid = blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y;
+  int t_j = blockIdx.x* %(blockDim.x)s  + threadIdx.x;
+  int t_i = blockIdx.y* %(blockDim.y)s  + threadIdx.y;
+  int t_k = blockIdx.z* %(blockDim.z)s  + threadIdx.z;
+  int tid = t_j + t_i* %(blockDim.x)s * %(gridDim.x)s  + t_k* %(blockDim.x)s * %(gridDim.x)s * %(blockDim.y)s * %(gridDim.y)s ;
+  int tid_b = threadIdx.x + threadIdx.y* %(blockDim.x)s  + threadIdx.z* %(blockDim.x)s * %(blockDim.y)s ;
+//   int bid = blockIdx.x + blockIdx.y* %(gridDim.x)s  + blockIdx.z* %(gridDim.x)s * %(gridDim.y)s ;
   
   pyComplex psi = psi_d[tid];
   __shared__ cudaP density[ %(THREADS_PER_BLOCK)s ];
-  density[tid_b] = abs(psi)*abs(psi);
+  density[tid_b] = norm(psi);
   __syncthreads();
   
-  int i = blockDim.x*blockDim.y*blockDim.z / 2;
+  int i =  %(blockDim.x)s * %(blockDim.y)s * %(blockDim.z)s  / 2;
   while ( i > 0 ){
     if ( tid_b < i ) density[tid_b] = density[tid_b] + density[tid_b+i];
     __syncthreads();
@@ -149,19 +149,19 @@ __global__ void findActivity_kernel( cudaP minDensity, pyComplex *psi_d, unsigne
   }
   if ( tid_b == 0 ){
     if (density[0] >= minDensity ) {
-      activity[ blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y ] = (unsigned char) 1;
+      activity[ blockIdx.x + blockIdx.y* %(gridDim.x)s  + blockIdx.z* %(gridDim.x)s * %(gridDim.y)s  ] = (unsigned char) 1;
       //right 
-      if (blockIdx.x < gridDim.x-1) activity[ (blockIdx.x+1) + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y ] = (unsigned char) 1;
+      if (blockIdx.x <  %(gridDim.x)s -1) activity[ (blockIdx.x+1) + blockIdx.y* %(gridDim.x)s  + blockIdx.z* %(gridDim.x)s * %(gridDim.y)s  ] = (unsigned char) 1;
       //left
-      if (blockIdx.x > 0) activity[ (blockIdx.x-1) + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y ] = (unsigned char) 1;
+      if (blockIdx.x > 0) activity[ (blockIdx.x-1) + blockIdx.y* %(gridDim.x)s  + blockIdx.z* %(gridDim.x)s * %(gridDim.y)s  ] = (unsigned char) 1;
       //up 
-      if (blockIdx.y < gridDim.y-1) activity[ blockIdx.x + (blockIdx.y+1)*gridDim.x + blockIdx.z*gridDim.x*gridDim.y ] = (unsigned char) 1;
+      if (blockIdx.y <  %(gridDim.y)s -1) activity[ blockIdx.x + (blockIdx.y+1)* %(gridDim.x)s  + blockIdx.z* %(gridDim.x)s * %(gridDim.y)s  ] = (unsigned char) 1;
       //down
-      if (blockIdx.y > 0) activity[ blockIdx.x + (blockIdx.y-1)*gridDim.x + blockIdx.z*gridDim.x*gridDim.y ] = (unsigned char) 1;
+      if (blockIdx.y > 0) activity[ blockIdx.x + (blockIdx.y-1)* %(gridDim.x)s  + blockIdx.z* %(gridDim.x)s * %(gridDim.y)s  ] = (unsigned char) 1;
       //top 
-      if (blockIdx.z < gridDim.z-1) activity[ blockIdx.x + blockIdx.y*gridDim.x + (blockIdx.z+1)*gridDim.x*gridDim.y ] = (unsigned char) 1;
+      if (blockIdx.z <  %(gridDim.z)s -1) activity[ blockIdx.x + blockIdx.y* %(gridDim.x)s  + (blockIdx.z+1)* %(gridDim.x)s * %(gridDim.y)s  ] = (unsigned char) 1;
       //bottom
-      if (blockIdx.z > 0) activity[ blockIdx.x + blockIdx.y*gridDim.x + (blockIdx.z-1)*gridDim.x*gridDim.y ] = (unsigned char) 1;
+      if (blockIdx.z > 0) activity[ blockIdx.x + blockIdx.y* %(gridDim.x)s  + (blockIdx.z-1)* %(gridDim.x)s * %(gridDim.y)s  ] = (unsigned char) 1;
     }
   }
 }
@@ -191,7 +191,7 @@ __global__ void getVelocity_kernel( int neighbors, cudaP dx, cudaP dy, cudaP dz,
   int bid = blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y;
   
   //Border blocks are skiped
-  if ( ( blockIdx.x == 0 or blockDim.x == gridDim.x -1 ) or ( blockIdx.y == 0 or blockDim.y == gridDim.y -1 ) or ( blockIdx.z == 0 or blockDim.z == gridDim.z -1 ) ) return; 
+  if ( ( blockIdx.x == 0 or blockDim.x == gridDim.x -1 ) or ( blockIdx.y == 0 or blockDim.y == gridDim.y -1 ) or ( blockIdx.z == 0 or blockDim.z ==  %(gridDim.z)s  -1 ) ) return; 
  
   __shared__ unsigned char activeBlock;
   if (tid_b == 0 ) activeBlock = activity[bid];
@@ -348,19 +348,19 @@ texture< fp_tex_cudaP, cudaTextureType3D, cudaReadModeElementType> tex_psiImag;
 surface< void, cudaSurfaceType3D> surf_psiReal;
 surface< void, cudaSurfaceType3D> surf_psiImag;
 __device__ pyComplex vortexCore_tex
-	    ( int nWidth, int nHeight, cudaP nDepth, cudaP xMin, cudaP yMin, cudaP zMin, 
+	    ( cudaP xMin, cudaP yMin, cudaP zMin, 
 	      cudaP dx, cudaP dy, cudaP dz, int t_i, int t_j, int t_k, 
 	      cudaP gammaX, cudaP gammaY, cudaP gammaZ, cudaP omega ){
   
 
-  cudaP dxInv = 1.0f/dx;
+  const cudaP dxInv = 1.0f/dx;
 //   cudaP dyInv = 1.0f/dy;
 //   cudaP dzInv = 1.0f/dz;
-  cudaP x = t_j*dx + xMin;
-  cudaP y = t_i*dy + yMin;
-  cudaP z = t_k*dz + zMin;
+  const cudaP x = t_j*dx + xMin;
+  const cudaP y = t_i*dy + yMin;
+  const cudaP z = t_k*dz + zMin;
   
-  pyComplex iComplex( 0, 1.0f );
+  const pyComplex iComplex( 0, 1.0f );
   pyComplex center, psiPlus, psiMinus, laplacian;
   pyComplex Lz;
   center._M_re = fp_tex3D(tex_psiReal, t_j, t_i, t_k);
@@ -386,11 +386,7 @@ __device__ pyComplex vortexCore_tex
   psiMinus._M_im = fp_tex3D(tex_psiImag, t_j, t_i, t_k-1);
   laplacian +=  (psiPlus + psiMinus - cudaP(2)*center )*dxInv*dxInv;
 
-  
-  cudaP Vtrap_GP;
-  Vtrap_GP = 8000*norm(center) + (gammaX*x*x + gammaY*y*y + gammaZ*z*z)*cudaP(0.5); 
-  
-   
+  const cudaP Vtrap_GP = 8000*norm(center) + (gammaX*x*x + gammaY*y*y + gammaZ*z*z)*cudaP(0.5); 
 
   return iComplex*(laplacian*cudaP(0.5) - (Vtrap_GP)*center - Lz*omega);
 //   return iComplex*(laplacian*cudaP(0.5) - (Vtrap_GP)*center );
@@ -441,31 +437,30 @@ __global__ void eulerStep_kernel( const int nWidth, const int nHeight, const int
 }
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-__global__ void eulerStep_texture_kernel( const int nWidth, const int nHeight, const int nDepth, 
-				  const cudaP slopeCoef, const cudaP weight, 
+__global__ void eulerStep_texture_kernel(  const cudaP slopeCoef, const cudaP weight, 
 				  const cudaP xMin, const cudaP yMin, const cudaP zMin, 
 				  const cudaP dx, const cudaP dy, const cudaP dz, const cudaP dt, 
 				  const cudaP gammaX, const cudaP gammaY, const cudaP gammaZ, const cudaP omega,
 				      pyComplex *psi_d, pyComplex *psiRunge,
 				      unsigned char lastRK4Step, unsigned char *activity ){
-  const int t_j = blockIdx.x*blockDim.x + threadIdx.x;
-  const int t_i = blockIdx.y*blockDim.y + threadIdx.y;
-  const int t_k = blockIdx.z*blockDim.z + threadIdx.z;
-  const int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
-  const int tid_b = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
-//   int bid = blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y;
+  const int t_j = blockIdx.x* %(blockDim.x)s  + threadIdx.x;
+  const int t_i = blockIdx.y* %(blockDim.y)s  + threadIdx.y;
+  const int t_k = blockIdx.z* %(blockDim.z)s  + threadIdx.z;
+  const int tid = t_j + t_i* %(blockDim.x)s * %(gridDim.x)s  + t_k* %(blockDim.x)s * %(gridDim.x)s * %(blockDim.y)s * %(gridDim.y)s ;
+  const int tid_b = threadIdx.x + threadIdx.y* %(blockDim.x)s  + threadIdx.z* %(blockDim.x)s * %(blockDim.y)s ;
+//   int bid = blockIdx.x + blockIdx.y* %(gridDim.x)s  + blockIdx.z* %(gridDim.x)s * %(gridDim.y)s ;
   
   
   //Border blocks are skiped
-  if ( ( blockIdx.x == 0 or blockDim.x == gridDim.x -1 ) or ( blockIdx.y == 0 or blockDim.y == gridDim.y -1 ) or ( blockIdx.z == 0 or blockDim.z == gridDim.z -1 ) ) return; 
+  if ( ( blockIdx.x == 0 or  %(blockDim.x)s  ==  %(gridDim.x)s  -1 ) or ( blockIdx.y == 0 or  %(blockDim.y)s  ==  %(gridDim.y)s  -1 ) or ( blockIdx.z == 0 or  %(blockDim.z)s  ==  %(gridDim.z)s  -1 ) ) return; 
   //Unactive blocks are skiped
   __shared__ unsigned char activeBlock;
-  if ( tid_b == 0 ) activeBlock = activity[blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y];
+  if ( tid_b == 0 ) activeBlock = activity[blockIdx.x + blockIdx.y* %(gridDim.x)s  + blockIdx.z* %(gridDim.x)s * %(gridDim.y)s ];
   __syncthreads();
   if ( !activeBlock ) return;
   
   pyComplex value;
-  value = vortexCore_tex( nWidth, nHeight, nDepth, xMin, yMin, zMin, 
+  value = vortexCore_tex( xMin, yMin, zMin, 
 		      dx, dy, dz, t_i, t_j, t_k,
 		      gammaX, gammaY, gammaZ, omega );
   value = dt*value;
