@@ -353,39 +353,68 @@ __device__ pyComplex vortexCore_tex
 	      cudaP gammaX, cudaP gammaY, cudaP gammaZ, cudaP omega ){
   
   pyComplex iComplex( 0, 1.0f );
-  pyComplex center, right, left, up, down, top, bottom;
-  center._M_re = fp_tex3D(tex_psiReal, (float)t_j, (float)t_i, (float)t_k);
-  center._M_im = fp_tex3D(tex_psiImag, (float)t_j, (float)t_i, (float)t_k);
-  up._M_re =     fp_tex3D(tex_psiReal, (float)t_j, (float)t_i+1, (float)t_k);
-  up._M_im =     fp_tex3D(tex_psiImag, (float)t_j, (float)t_i+1, (float)t_k);
-  down._M_re =   fp_tex3D(tex_psiReal, (float)t_j, (float)t_i-1, (float)t_k);
-  down._M_im =   fp_tex3D(tex_psiImag, (float)t_j, (float)t_i-1, (float)t_k);
-  right._M_re =  fp_tex3D(tex_psiReal, (float)t_j+1, (float)t_i, (float)t_k);
-  right._M_im =  fp_tex3D(tex_psiImag, (float)t_j+1, (float)t_i, (float)t_k);
-  left._M_re =   fp_tex3D(tex_psiReal, (float)t_j-1, (float)t_i, (float)t_k);
-  left._M_im =   fp_tex3D(tex_psiImag, (float)t_j-1, (float)t_i, (float)t_k);
-  top._M_re =    fp_tex3D(tex_psiReal, (float)t_j, (float)t_i, (float)t_k+1);
-  top._M_im =    fp_tex3D(tex_psiImag, (float)t_j, (float)t_i, (float)t_k+1);
-  bottom._M_re = fp_tex3D(tex_psiReal, (float)t_j, (float)t_i, (float)t_k-1);
-  bottom._M_im = fp_tex3D(tex_psiImag, (float)t_j, (float)t_i, (float)t_k-1);
-  
+//   pyComplex center, right, left, up, down, top, bottom;
+//   center._M_re = fp_tex3D(tex_psiReal, (float)t_j, (float)t_i, (float)t_k);
+//   center._M_im = fp_tex3D(tex_psiImag, (float)t_j, (float)t_i, (float)t_k);
+//   up._M_re =     fp_tex3D(tex_psiReal, (float)t_j, (float)t_i+1, (float)t_k);
+//   up._M_im =     fp_tex3D(tex_psiImag, (float)t_j, (float)t_i+1, (float)t_k);
+//   down._M_re =   fp_tex3D(tex_psiReal, (float)t_j, (float)t_i-1, (float)t_k);
+//   down._M_im =   fp_tex3D(tex_psiImag, (float)t_j, (float)t_i-1, (float)t_k);
+//   right._M_re =  fp_tex3D(tex_psiReal, (float)t_j+1, (float)t_i, (float)t_k);
+//   right._M_im =  fp_tex3D(tex_psiImag, (float)t_j+1, (float)t_i, (float)t_k);
+//   left._M_re =   fp_tex3D(tex_psiReal, (float)t_j-1, (float)t_i, (float)t_k);
+//   left._M_im =   fp_tex3D(tex_psiImag, (float)t_j-1, (float)t_i, (float)t_k);
+//   top._M_re =    fp_tex3D(tex_psiReal, (float)t_j, (float)t_i, (float)t_k+1);
+//   top._M_im =    fp_tex3D(tex_psiImag, (float)t_j, (float)t_i, (float)t_k+1);
+//   bottom._M_re = fp_tex3D(tex_psiReal, (float)t_j, (float)t_i, (float)t_k-1);
+//   bottom._M_im = fp_tex3D(tex_psiImag, (float)t_j, (float)t_i, (float)t_k-1);
+
+  cudaP Vtrap_GP;
   cudaP dxInv = 1.0f/dx;
-  cudaP dyInv = 1.0f/dy;
-  cudaP dzInv = 1.0f/dz;
-  cudaP x = t_j*dx + xMin;
-  cudaP y = t_i*dy + yMin;
-  cudaP z = t_k*dz + zMin;
+//   cudaP dyInv = 1.0f/dy;
+//   cudaP dzInv = 1.0f/dz;
+  cudaP x, y, z;
+  cudaP oneHalf = cudaP(0.5);
+  x = t_j*dx + xMin;
+  y = t_i*dy + yMin;
+  z = t_k*dz + zMin;
+  pyComplex center, psiPlus, psiMinus, laplacian;
+  pyComplex Lz;
+  center._M_re = fp_tex3D(tex_psiReal, t_j, t_i, t_k);
+  center._M_im = fp_tex3D(tex_psiImag, t_j, t_i, t_k);
+  // x-term for derivatives
+  psiPlus._M_re  = fp_tex3D(tex_psiReal, t_j+1, t_i, t_k);
+  psiPlus._M_im  = fp_tex3D(tex_psiImag, t_j+1, t_i, t_k);
+  psiMinus._M_re = fp_tex3D(tex_psiReal, t_j-1, t_i, t_k);
+  psiMinus._M_im = fp_tex3D(tex_psiImag, t_j-1, t_i, t_k);  
   
-  pyComplex laplacian, Lz;
-  cudaP GP, Vtrap;
-  laplacian = (up + down - cudaP(2)*center )*dyInv*dyInv + (right + left - cudaP(2)*center )*dxInv*dxInv + (top + bottom - cudaP(2)*center )*dzInv*dzInv;
-  Vtrap = (gammaX*x*x + gammaY*y*y + gammaZ*z*z)*0.5f;
-  GP = 8000*norm(center); 
-  Lz =  iComplex*( (up - down)*dyInv*cudaP(0.5)*x - (right - left)*dxInv*cudaP(0.5f)*y ) ;
-   
+  laplacian = (psiPlus + psiMinus - cudaP(2)*center )*dxInv*dxInv;
+  Lz = ( psiMinus + psiPlus)*dxInv*oneHalf*y;  
+  Vtrap_GP = 8000*norm(center) + oneHalf*gammaX*x*x;
+  
+  // y-term for derivatives
+  psiPlus._M_re  = fp_tex3D(tex_psiReal, t_j, t_i+1, t_k);
+  psiPlus._M_im  = fp_tex3D(tex_psiImag, t_j, t_i+1, t_k);
+  psiMinus._M_re = fp_tex3D(tex_psiReal, t_j, t_i-1, t_k);
+  psiMinus._M_im = fp_tex3D(tex_psiImag, t_j, t_i-1, t_k); 
+  
+  laplacian += (psiPlus + psiMinus - cudaP(2)*center )*dxInv*dxInv;
+  Lz += (psiPlus - psiMinus)*dxInv*oneHalf*x;
+  Vtrap_GP += oneHalf*gammaY*y*y;
+  
+  // z-term for derivatives
+  psiPlus._M_re  = fp_tex3D(tex_psiReal, t_j, t_i, t_k+1);
+  psiPlus._M_im  = fp_tex3D(tex_psiImag, t_j, t_i, t_k+1);
+  psiMinus._M_re = fp_tex3D(tex_psiReal, t_j, t_i, t_k-1);
+  psiMinus._M_im = fp_tex3D(tex_psiImag, t_j, t_i, t_k-1); 
+  
+  laplacian += (psiPlus + psiMinus - cudaP(2)*center )*dxInv*dxInv;
+  Vtrap_GP += oneHalf*gammaZ*z*z;
+  
 
-  return iComplex*(laplacian*cudaP(0.5) - (Vtrap + GP)*center - Lz*omega);
 
+  return iComplex*(laplacian*oneHalf - (Vtrap_GP)*center - Lz*omega);
+//   return iComplex*(laplacian*cudaP(0.5)*dxInv*dxInv - (Vtrap_GP)*center );
 }
 ////////////////////////////////////////////////////////////////////////////////
 //////////////////////           EULER                //////////////////////////
