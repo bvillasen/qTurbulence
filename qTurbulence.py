@@ -27,6 +27,7 @@ useDevice = None
 usingAnimation = False
 timeRelax = 0.3
 realFFT = False
+realTEXTURE = False
 showKernelMemInfo = False
 for option in sys.argv:
   if option == "float": cudaP = "float"
@@ -35,7 +36,7 @@ for option in sys.argv:
   if option == "128" or option == "256": nPoints = int(option)
   if option.find("dev=") != -1: useDevice = int(option[-1]) 
   if option == "fft": realFFT = True
- 
+  if option == "tex": realTEXTURE = True
 precision  = {"float":(np.float32, np.complex64), "double":(np.float64,np.complex128) } 
 cudaPre, cudaPreComplex = precision[cudaP]
 
@@ -66,6 +67,10 @@ gammaZ = 1.0
 x0 = cudaPre( 0. )
 y0 = cudaPre( 0. )
 neighbors = 1
+
+nIteratiosPerFrame_real = 50
+if realTEXTURE: nIteratiosPerFrame_real = 100
+nIteratiosPerFrame_imag = 20
 
 applyTransition = False
 realDynamics = False
@@ -115,8 +120,16 @@ getActivityKernel = cudaCode.get_function( "getActivity_kernel" )
 getVelocityKernel = cudaCode.get_function( "getVelocity_kernel" )
 eulerStepKernel = cudaCode.get_function( "eulerStep_kernel" )
 eulerStep_FFTKernel = cudaCode.get_function( "eulerStep_fft_kernel" )  ##V_FFT
+#TEXTURE version
+eulerStep_textKernel = cudaCode.get_function( "eulerStep_texture_kernel" )
+tex_psiReal = cudaCode.get_texref("tex_psiReal")
+tex_psiImag = cudaCode.get_texref("tex_psiImag")
+surf_psiReal = cudaCode.get_surfref("surf_psiReal")
+surf_psiImag = cudaCode.get_surfref("surf_psiImag")
 if showKernelMemInfo: 
   kernelMemoryInfo(eulerStepKernel, 'eulerStepKernel')
+  print ""
+  kernelMemoryInfo(eulerStep_textKernel, 'eulerStepKernel_texture')
   print ""
 
 ########################################################################
@@ -179,7 +192,7 @@ def implicit_iteration( ):
   alpha= cudaPre( ( 0.5*(gpuarray.max(alphas_d) + gpuarray.min(alphas_d)) ).get() )  #OPTIMIZACION 
 ########################################################################
 def imaginaryStep():
-  [ implicit_iteration() for i in range(10) ]
+  [ implicit_iteration() for i in range(nIteratiosPerFrame_imag) ]
 ########################################################################
 def rk4_iteration():
   cuda.memset_d8(activity_d.ptr, 0, nBlocks3D )
@@ -208,6 +221,50 @@ def rk4_iteration():
   eulerStepKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
 		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, omega,
 		  psi_d, psiK1_d, psiK2_d, psiRunge_d, np.uint8(1), activity_d, grid=grid3D, block=block3D ) 
+########################################################################
+def rk4_texture_iteration():
+  cuda.memset_d8(activity_d.ptr, 0, nBlocks3D )
+  findActivityKernel( cudaPre(0.00001), psi_d, activity_d, grid=grid3D, block=block3D )
+  #Step 1
+  slopeCoef = cudaPre( 1.0 )
+  weight    = cudaPre( 0.5 )
+  tex_psiReal.set_array( psiK2Real_array )
+  tex_psiImag.set_array( psiK2Imag_array )
+  surf_psiReal.set_array( psiK1Real_array )
+  surf_psiImag.set_array( psiK1Imag_array )
+  eulerStep_textKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
+		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, omega,
+		  psi_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )
+  #Step 2
+  slopeCoef = cudaPre( 2.0 )
+  weight    = cudaPre( 0.5 )
+  tex_psiReal.set_array( psiK1Real_array )
+  tex_psiImag.set_array( psiK1Imag_array )
+  surf_psiReal.set_array( psiK2Real_array )
+  surf_psiImag.set_array( psiK2Imag_array )
+  eulerStep_textKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
+		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, omega,
+		  psi_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )  
+  #Step 3
+  slopeCoef = cudaPre( 2.0 )
+  weight    = cudaPre( 1. )
+  tex_psiReal.set_array( psiK2Real_array )
+  tex_psiImag.set_array( psiK2Imag_array )
+  surf_psiReal.set_array( psiK1Real_array )
+  surf_psiImag.set_array( psiK1Imag_array )
+  eulerStep_textKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
+		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, omega,
+		  psi_d, psiRunge_d, np.uint8(0), activity_d, grid=grid3D, block=block3D )    
+  #Step 4
+  slopeCoef = cudaPre( 1.0 )
+  weight    = cudaPre( 1. )
+  tex_psiReal.set_array( psiK1Real_array )
+  tex_psiImag.set_array( psiK1Imag_array )
+  surf_psiReal.set_array( psiK2Real_array )
+  surf_psiImag.set_array( psiK2Imag_array )
+  eulerStep_textKernel( np.int32(nWidth), np.int32(nHeight), np.int32(nDepth), slopeCoef, weight,
+		  xMin, yMin, zMin, dx, dy, dz, dtReal, gammaX, gammaY, gammaZ, omega,
+		  psi_d, psiRunge_d, np.uint8(1), activity_d, grid=grid3D, block=block3D ) 
 ########################################################################
 def rk4_FFT_iteration():
   cuda.memset_d8(activity_d.ptr, 0, nBlocks3D )
@@ -262,10 +319,8 @@ def rk4_FFT_iteration():
 		  np.uint8(1), activity_d, grid=grid3D, block=block3D ) 
 ########################################################################
 def realStep():
-  #cuda.memset_d8(activity_d.ptr, 0, nBlocks3D )
-  #findActivityKernel( cudaPre(0.001), psi_d, activity_d, grid=grid3D, block=block3D )
-  if realFFT: [rk4_FFT_iteration() for i in range(10)]
-  else: [rk4_iteration() for i in range(10)]
+  if realTEXTURE: [rk4_texture_iteration() for i in range(nIteratiosPerFrame_real)]
+  else: [rk4_iteration() for i in range( nIteratiosPerFrame_real )]
 ########################################################################
 def stepFuntion():
   getModulo( psi_d, psiMod_d )
@@ -297,6 +352,11 @@ def timeTransition():
   if realDynamics:
     cuda.memcpy_dtod(psiK2_d.ptr, psi_d.ptr, psi_d.nbytes)
     cuda.memcpy_dtod(psiRunge_d.ptr, psi_d.ptr, psi_d.nbytes)
+    if realTEXTURE:
+      copy3DpsiK1Real()
+      copy3DpsiK1Imag()
+      copy3DpsiK2Real()
+      copy3DpsiK2Imag()
     print "Real Dynamics"
   else:    
     #GetAlphas
@@ -370,6 +430,15 @@ psiK2_d = gpuarray.to_gpu( psi_h )
 psiRunge_d = gpuarray.to_gpu( psi_h )
 #For FFT version
 laplacian_d = gpuarray.to_gpu(  np.zeros_like(psi_h) )
+#TEXTURE version
+k1tempReal = gpuarray.to_gpu(  np.zeros_like(psi_h.real) )
+k1tempImag = gpuarray.to_gpu(  np.zeros_like(psi_h.real) )
+k2tempReal = gpuarray.to_gpu(  np.zeros_like(psi_h.real) )
+k2tempImag = gpuarray.to_gpu(  np.zeros_like(psi_h.real) )
+psiK1Real_array, copy3DpsiK1Real = gpuArray3DtocudaArray( k1tempReal, allowSurfaceBind=True, precision=cudaP )
+psiK1Imag_array, copy3DpsiK1Imag = gpuArray3DtocudaArray( k1tempImag, allowSurfaceBind=True, precision=cudaP )
+psiK2Real_array, copy3DpsiK2Real = gpuArray3DtocudaArray( k2tempReal, allowSurfaceBind=True, precision=cudaP )
+psiK2Imag_array, copy3DpsiK2Imag = gpuArray3DtocudaArray( k2tempImag, allowSurfaceBind=True, precision=cudaP ) 
 #memory for plotting
 plotData_d = gpuarray.to_gpu(np.zeros([nDepth, nHeight, nWidth], dtype = np.uint8))
 volumeRender.plotData_dArray, copyToScreenArray = gpuArray3DtocudaArray( plotData_d )
@@ -416,9 +485,12 @@ def keyboard(*args):
 
 def specialKeyboardFunc( key, x, y ):
   global plotVar, neighbors, plottingActive, applyTransition
+  #global omega
   if key== volumeRender.GLUT_KEY_DOWN:
     plottingActive = not plottingActive
     if plottingActive: print "plottingActive"
+    #omega -= cudaPre(0.01)
+    #print omega
   if key== volumeRender.GLUT_KEY_RIGHT:
     plotVar += 1
     if plotVar == 2: plotVar = 0
@@ -432,8 +504,12 @@ if showKernelMemInfo:
   implicit_iteration()
   applyTransition = True
   timeTransition() 
-  rk4_iteration()
-  rk4_iteration()
+  if realTEXTURE:
+    rk4_texture_iteration()
+    rk4_texture_iteration()
+  else:
+    rk4_iteration()
+    rk4_iteration()
   print "Precision: ", cudaP
   print "Timing Info saved in: cuda_profile_1.log \n\n"
   sys.exit()

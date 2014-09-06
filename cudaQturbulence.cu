@@ -1,4 +1,5 @@
 #include <pycuda-complex.hpp>
+#include <pycuda-helpers.hpp>
 #define pi 3.14159265f
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -250,7 +251,7 @@ __device__ pyComplex vortexCore( const int nWidth, const int nHeight, const int 
   const cudaP z = t_k*dz + zMin;
   
   const pyComplex iComplex( cudaP(0.), cudaP(1.) );
-  pyComplex laplacian( cudaP(0.), cudaP(0.) );
+//   pyComplex laplacian( cudaP(0.), cudaP(0.) );
 //   pyComplex Lz( cudaP(0.), cudaP(0.) );
   pyComplex psiMinus, psiPlus;
   
@@ -273,7 +274,7 @@ __device__ pyComplex vortexCore( const int nWidth, const int nHeight, const int 
 //   psiPlus  = threadIdx.x == (nWidth-1) ? 
 // 	      psiStep[ (t_j+1) + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y ] : 
 // 	      psi_sh[threadIdx.x+1][threadIdx.y][threadIdx.z];
-  laplacian += ( psiPlus + psiMinus - cudaP(2.)*center )*dxInv*dxInv;
+  pyComplex laplacian = ( psiPlus + psiMinus - cudaP(2)*center )*dxInv*dxInv;
   pyComplex Lz =  -iComplex*( psiPlus - psiMinus )*dxInv*cudaP(0.5)*y;
   
   // laplacian Y-term
@@ -289,7 +290,7 @@ __device__ pyComplex vortexCore( const int nWidth, const int nHeight, const int 
     psiPlus  = psi_sh[threadIdx.x][threadIdx.y+1][threadIdx.z];
     psiMinus = psi_sh[threadIdx.x][threadIdx.y-1][threadIdx.z];
   }
-  laplacian += ( psiPlus + psiMinus - cudaP(2.)*center )*dyInv*dyInv;
+  laplacian += ( psiPlus + psiMinus - cudaP(2)*center )*dyInv*dyInv;
   Lz +=  iComplex*( psiPlus - psiMinus)*dyInv*cudaP(0.5)*x;
   
   // laplacian Z-term
@@ -305,14 +306,14 @@ __device__ pyComplex vortexCore( const int nWidth, const int nHeight, const int 
     psiPlus  = psi_sh[threadIdx.x][threadIdx.y][threadIdx.z+1];
     psiMinus = psi_sh[threadIdx.x][threadIdx.y][threadIdx.z-1];
   }
-  laplacian += ( psiPlus + psiMinus - cudaP(2.)*center )*dzInv*dzInv; 
+  laplacian += ( psiPlus + psiMinus - cudaP(2)*center )*dzInv*dzInv; 
   
   
-  pyComplex Vtrap, GP; 
-  Vtrap = (gammaX*x*x + gammaY*y*y + gammaZ*z*z)*cudaP(0.5)*center;
-  GP = cudaP(8000.)*norm(center)*center;  
+//   pyComplex  GP; 
+  cudaP Vtrap_GP = (gammaX*x*x + gammaY*y*y + gammaZ*z*z)*cudaP(0.5) + 8000*norm(center);
+//   cudaP GP = ;  
   
-  return iComplex*(laplacian*cudaP(0.5) - Vtrap - GP - Lz*omega);
+  return iComplex*(laplacian*cudaP(0.5) - Vtrap_GP*center - Lz*omega);
 //   return iComplex*(laplacian*cudaP(0.5) - Vtrap - GP );
 }
 
@@ -323,9 +324,9 @@ __device__ pyComplex vortexCore_fft( int nWidth, int nHeight, int nDepth, cudaP 
 				 cudaP gammaX, cudaP gammaY, cudaP gammaZ, cudaP omega, cudaP x0, cudaP y0, 
 				 pyComplex *psiStep, pyComplex *laplacian, pyComplex *partialX, pyComplex *partialY){
   pyComplex center = psiStep[tid];
-  cudaP dxInv = cudaP(1.0)/dx;
-  cudaP dyInv = cudaP(1.0)/dy;
-  cudaP dzInv = cudaP(1.0)/dz;
+//   cudaP dxInv = cudaP(1.0)/dx;
+//   cudaP dyInv = cudaP(1.0)/dy;
+//   cudaP dzInv = cudaP(1.0)/dz;
   cudaP x = t_j*dx + xMin;
   cudaP y = t_i*dy + yMin;
   cudaP z = t_k*dz + zMin;
@@ -337,6 +338,53 @@ __device__ pyComplex vortexCore_fft( int nWidth, int nHeight, int nDepth, cudaP 
   Lz = iComplex*( partialY[tid] - partialX[tid] )*omega;
   
   return iComplex * ( laplacian[tid]*cudaP(0.5) - Vtrap - GP - Lz );
+
+}
+
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+texture< fp_tex_cudaP, cudaTextureType3D, cudaReadModeElementType> tex_psiReal;
+texture< fp_tex_cudaP, cudaTextureType3D, cudaReadModeElementType> tex_psiImag;
+surface< void, cudaSurfaceType3D> surf_psiReal;
+surface< void, cudaSurfaceType3D> surf_psiImag;
+__device__ pyComplex vortexCore_tex
+	    ( int nWidth, int nHeight, cudaP nDepth, cudaP xMin, cudaP yMin, cudaP zMin, 
+	      cudaP dx, cudaP dy, cudaP dz, int t_i, int t_j, int t_k, 
+	      cudaP gammaX, cudaP gammaY, cudaP gammaZ, cudaP omega ){
+  
+  pyComplex iComplex( 0, 1.0f );
+  pyComplex center, right, left, up, down, top, bottom;
+  center._M_re = fp_tex3D(tex_psiReal, (float)t_j, (float)t_i, (float)t_k);
+  center._M_im = fp_tex3D(tex_psiImag, (float)t_j, (float)t_i, (float)t_k);
+  up._M_re =     fp_tex3D(tex_psiReal, (float)t_j, (float)t_i+1, (float)t_k);
+  up._M_im =     fp_tex3D(tex_psiImag, (float)t_j, (float)t_i+1, (float)t_k);
+  down._M_re =   fp_tex3D(tex_psiReal, (float)t_j, (float)t_i-1, (float)t_k);
+  down._M_im =   fp_tex3D(tex_psiImag, (float)t_j, (float)t_i-1, (float)t_k);
+  right._M_re =  fp_tex3D(tex_psiReal, (float)t_j+1, (float)t_i, (float)t_k);
+  right._M_im =  fp_tex3D(tex_psiImag, (float)t_j+1, (float)t_i, (float)t_k);
+  left._M_re =   fp_tex3D(tex_psiReal, (float)t_j-1, (float)t_i, (float)t_k);
+  left._M_im =   fp_tex3D(tex_psiImag, (float)t_j-1, (float)t_i, (float)t_k);
+  top._M_re =    fp_tex3D(tex_psiReal, (float)t_j, (float)t_i, (float)t_k+1);
+  top._M_im =    fp_tex3D(tex_psiImag, (float)t_j, (float)t_i, (float)t_k+1);
+  bottom._M_re = fp_tex3D(tex_psiReal, (float)t_j, (float)t_i, (float)t_k-1);
+  bottom._M_im = fp_tex3D(tex_psiImag, (float)t_j, (float)t_i, (float)t_k-1);
+  
+  cudaP dxInv = 1.0f/dx;
+  cudaP dyInv = 1.0f/dy;
+  cudaP dzInv = 1.0f/dz;
+  cudaP x = t_j*dx + xMin;
+  cudaP y = t_i*dy + yMin;
+  cudaP z = t_k*dz + zMin;
+  
+  pyComplex laplacian, Lz;
+  cudaP GP, Vtrap;
+  laplacian = (up + down - cudaP(2)*center )*dyInv*dyInv + (right + left - cudaP(2)*center )*dxInv*dxInv + (top + bottom - cudaP(2)*center )*dzInv*dzInv;
+  Vtrap = (gammaX*x*x + gammaY*y*y + gammaZ*z*z)*0.5f;
+  GP = 8000*norm(center); 
+  Lz =  iComplex*( (up - down)*dyInv*cudaP(0.5)*x - (right - left)*dxInv*cudaP(0.5f)*y ) ;
+   
+
+  return iComplex*(laplacian*cudaP(0.5) - (Vtrap + GP)*center - Lz*omega);
 
 }
 ////////////////////////////////////////////////////////////////////////////////
@@ -383,7 +431,55 @@ __global__ void eulerStep_kernel( const int nWidth, const int nHeight, const int
     psiRunge[tid] = psiRunge[tid] + slopeCoef*value/cudaP(6.);
   }
 }
-
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+__global__ void eulerStep_texture_kernel( const int nWidth, const int nHeight, const int nDepth, 
+				  const cudaP slopeCoef, const cudaP weight, 
+				  const cudaP xMin, const cudaP yMin, const cudaP zMin, 
+				  const cudaP dx, const cudaP dy, const cudaP dz, const cudaP dt, 
+				  const cudaP gammaX, const cudaP gammaY, const cudaP gammaZ, const cudaP omega,
+				      pyComplex *psi_d, pyComplex *psiRunge,
+				      unsigned char lastRK4Step, unsigned char *activity ){
+  const int t_j = blockIdx.x*blockDim.x + threadIdx.x;
+  const int t_i = blockIdx.y*blockDim.y + threadIdx.y;
+  const int t_k = blockIdx.z*blockDim.z + threadIdx.z;
+  const int tid = t_j + t_i*blockDim.x*gridDim.x + t_k*blockDim.x*gridDim.x*blockDim.y*gridDim.y;
+  const int tid_b = threadIdx.x + threadIdx.y*blockDim.x + threadIdx.z*blockDim.x*blockDim.y;
+//   int bid = blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y;
+  
+  
+  //Border blocks are skiped
+  if ( ( blockIdx.x == 0 or blockDim.x == gridDim.x -1 ) or ( blockIdx.y == 0 or blockDim.y == gridDim.y -1 ) or ( blockIdx.z == 0 or blockDim.z == gridDim.z -1 ) ) return; 
+  //Unactive blocks are skiped
+  __shared__ unsigned char activeBlock;
+  if ( tid_b == 0 ) activeBlock = activity[blockIdx.x + blockIdx.y*gridDim.x + blockIdx.z*gridDim.x*gridDim.y];
+  __syncthreads();
+  if ( !activeBlock ) return;
+  
+  pyComplex value;
+  value = vortexCore_tex( nWidth, nHeight, nDepth, xMin, yMin, zMin, 
+		      dx, dy, dz, t_i, t_j, t_k,
+		      gammaX, gammaY, gammaZ, omega );
+  value = dt*value;
+  
+  if (lastRK4Step ){
+    value = psiRunge[tid] + slopeCoef*value/cudaP(6.); 
+    psiRunge[tid] = value;
+//     psiStepOut[tid] = value;
+    psi_d[tid] = value;
+    surf3Dwrite(  value._M_re, surf_psiReal,  t_j*sizeof(cudaP), t_i, t_k,  cudaBoundaryModeClamp);
+    surf3Dwrite(  value._M_im, surf_psiImag,  t_j*sizeof(cudaP), t_i, t_k,  cudaBoundaryModeClamp);    
+  }  
+  else{
+//     psiStepOut[tid] = psi_d[tid] + weight*value;
+    psiRunge[tid] = psiRunge[tid] + slopeCoef*value/cudaP(6.);
+    value = psi_d[tid] + weight*value;
+    surf3Dwrite(  value._M_re, surf_psiReal,  t_j*sizeof(cudaP), t_i, t_k,  cudaBoundaryModeClamp);
+    surf3Dwrite(  value._M_im, surf_psiImag,  t_j*sizeof(cudaP), t_i, t_k,  cudaBoundaryModeClamp);
+    //add to rk4 final value
+    
+  }
+}
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 ///////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 __global__ void eulerStep_fft_kernel( int nWidth, int nHeight, int nDepth, cudaP slopeCoef, cudaP weight, 
